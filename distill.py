@@ -43,7 +43,6 @@ def run_train(args):
         num_nodes=args.num_nodes,
         devices=args.gpus,
         accumulate_grad_batches=args.accum_grad,
-        replace_sampler_ddp=False,  # we use the custom distributed sampler for ddp
         reload_dataloaders_every_n_epochs=1,
         gradient_clip_val=args.clip_norm,
         log_every_n_steps=args.log_interval,
