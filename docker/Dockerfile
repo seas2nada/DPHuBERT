@@ -64,8 +64,8 @@ WORKDIR ${workspace}
 ARG root_passwd=root
 RUN echo "root:${root_passwd}" | chpasswd
 
-ARG user=fairseq
-ARG group=fairseq
+ARG user=dphubert
+ARG group=dphubert
 ARG uid=911
 ARG gid=911
 ARG passwd=dsp2020
