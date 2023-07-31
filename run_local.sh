@@ -50,7 +50,7 @@ python distill.py \
     --max_updates ${max} \
     --clip_norm 10.0 \
     --num_nodes 1 \
-    --gpus 4 \
+    --gpus 1 \
     --accum_grad 1 \
     --precision 16 \
     --teacher_ckpt ${teacher_ckpt} \
@@ -89,7 +89,7 @@ python final_distill.py \
     --max_updates ${final_max} \
     --clip_norm 10.0 \
     --num_nodes 1 \
-    --gpus 4 \
+    --gpus 1 \
     --accum_grad 1 \
     --precision 16 \
     --teacher_ckpt ${teacher_ckpt} \
