@@ -166,3 +166,7 @@ pretrained/
 
 # SLURM output
 slurm-*.out
+
+tools/fairseq
+tools/activate_python.sh
+tools/Miniconda3-latest-Linux-x86_64.sh
