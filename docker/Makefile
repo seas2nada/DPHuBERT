@@ -10,7 +10,7 @@ DOCKER=docker
 
 # Docker configuration
 ARG_IMAGE_NAME?=hynet2/cuda:base
-ARG_CONTAINER_NAME?=fairseq
+ARG_CONTAINER_NAME?=dphubert
 # ARG_CONTAINER_HOSTNAME?=$(shell echo $(ARG_CONTAINER_NAME) | tr a-z A-Z)
 ARG_CONTAINER_HOSTNAME?=$(ARG_CONTAINER_NAME)
 
@@ -63,12 +63,12 @@ rm: stop
 copyauth:
 	$(eval HOST_IP := $(shell hostname -I | grep -o '^\S*'))
 	$(eval SSH_PORT := $(shell docker port $(ARG_CONTAINER_NAME) | grep 22/ | sed 's/.*0.0.0.0://g' | sed 's/->.*//g'))
-	scp -P $(SSH_PORT) $(HOME)/.ssh/authorized_keys fairseq@$(HOST_IP):/home/Workspace/.ssh
+	scp -P $(SSH_PORT) $(HOME)/.ssh/authorized_keys dphubert@$(HOST_IP):/home/Workspace/.ssh
 
 ssh:
 	$(eval HOST_IP := $(shell hostname -I | grep -o '^\S*'))
 	$(eval SSH_PORT := $(shell docker port $(ARG_CONTAINER_NAME) | grep 22/ | sed 's/.*0.0.0.0://g' | sed 's/->.*//g'))
-	ssh fairseq@$(HOST_IP) -p $(SSH_PORT)
+	ssh dphubert@$(HOST_IP) -p $(SSH_PORT)
 
 sshroot:
 	$(eval HOST_IP := $(shell hostname -I | grep -o '^\S*'))
@@ -91,7 +91,7 @@ info:
 	$(eval HOST_IP := $(shell hostname -I | grep -o '^\S*'))
 	$(eval SSH_PORT := $(shell docker port $(ARG_CONTAINER_NAME) | grep 22/ | sed 's/.*0.0.0.0://g' | sed 's/->.*//g'))
 	$(info HINT: ssh-keygen -t rsa -b 4096 -C "$$(id -un)[$$(id -u)-$$(id -g)]@$$(hostname)")
-	$(info HINT: ssh-copy-id -i ~/.ssh/id_rsa.pub fairseq@$(HOST_IP) -p $(SSH_PORT))
+	$(info HINT: ssh-copy-id -i ~/.ssh/id_rsa.pub dphubert@$(HOST_IP) -p $(SSH_PORT))
 	$(info ----------------------------------------)
 
 logs:

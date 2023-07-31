@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.3.1-cudnn8-devel-ubuntu20.04
+FROM nvidia/cuda:11.6.2-cudnn8-devel-ubuntu20.04
 ENV LANG C.UTF-8
 
 ARG DEBIAN_FRONTEND=noninteractive
@@ -64,8 +64,8 @@ WORKDIR ${workspace}
 ARG root_passwd=root
 RUN echo "root:${root_passwd}" | chpasswd
 
-ARG user=fairseq
-ARG group=fairseq
+ARG user=dphubert
+ARG group=dphubert
 ARG uid=911
 ARG gid=911
 ARG passwd=dsp2020
