@@ -15,6 +15,7 @@ from torch.nn import Module
 
 from . import components
 
+from fairseq import utils
 
 class Wav2Vec2Model(Module):
     """Acoustic model used in *wav2vec 2.0* :cite:`baevski2020wav2vec`.
@@ -123,6 +124,13 @@ class Wav2Vec2Model(Module):
         ff_interm_features = transformer_config["ff_interm_features"]
 
         return conv_config, use_attention, use_feed_forward, num_heads, remaining_heads, ff_interm_features
+
+    def get_logits(self, encoder_out):
+        logits = encoder_out
+        toks = logits[0].argmax(dim=-1).unique_consecutive()
+        logits = utils.log_softmax(logits.float(), dim=-1)
+
+        return logits
 
     def forward(
         self,

@@ -265,7 +265,6 @@ class DistillModule(pl.LightningModule):
         loss_distill, (loss_mse, loss_l1, loss_cos) = self.distill_loss(student_hiddens, teacher_hiddens)
 
         if self.student_model.aux is not None and self.teacher_model.aux is not None:
-            print("Itda!")
             student_pred = self.student_model.aux(student_hiddens[-1])
             teature_pred = self.teacher_model.aux(teacher_hiddens[-1])
             loss_distill_pred, (loss_mse_pred, loss_l1_pred, loss_cos_pred) = self.distill_loss(student_pred, teature_pred)

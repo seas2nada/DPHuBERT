@@ -3,12 +3,14 @@
 # first source conda.sh, and then
 # activate your conda environment
 
+. tools/activate_python.sh
+
 set -x
 
 # shared config
 tsv_dir=data/librispeech        # data path
-train_subset=train960           # train subset name: train960, train100
-teacher_ckpt=pretrained/hubert-base-ls960.hf.pth    # checkpoint path
+train_subset=train100          # train subset name: train960, train100
+teacher_ckpt=pretrained/wav2vec2_asr-base-ls100.hf.pth    # checkpoint path
 student_ckpt=${teacher_ckpt}    # student initialization, same as teacher
 distill_layers=0.4,8,12         # use period to separate groups where each group shares the same linear layer: [0], [4, 8, 12]
 distill_mode=layer2layer        # "layer2layer", "predlayer"
@@ -25,7 +27,7 @@ pruning_units=conv,head,interm      # conv,head,interm,attlayer,ffnlayer
 reg_lr=0.02             # learning rate for regularization params
 target_sparsity=0.75    # final target sparsity
 sparsity_warmup=5000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
-root_dir=exp/hubert-base_${train_subset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_reglr${reg_lr}_${pruning_units}
+root_dir=exp/wav2vec2-base_${train_subset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_reglr${reg_lr}_${pruning_units}
 
 # final distill config
 final_lr=0.0001         # learning rate for final distillation (training step 2)

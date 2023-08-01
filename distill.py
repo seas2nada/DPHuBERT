@@ -56,6 +56,14 @@ def run_train(args):
     _LG.info(f"Teacher model:\n{teacher_model}")
     teacher_result = teacher_model.load_state_dict(teacher_ckpt['state_dict'], strict=False)
     _LG.info(f"Load pretrained ckpt to teacher: missing {teacher_result.missing_keys}, unexpected {teacher_result.unexpected_keys}")
+
+    # Load teacher model
+    with torch.no_grad():
+        for name, p in teacher_model.named_parameters():
+            if "dummy_weight" in name:
+                continue
+            p.copy_(teacher_ckpt['state_dict'][name])
+
     # Freeze teacher model
     for p in teacher_model.parameters():
         p.requires_grad = False
