@@ -229,8 +229,14 @@ class AudioDataset(Dataset):
         self,
         tsv_dir: Union[str, Path],
         subset: str,
+        label_dir: Optional[str] = None,
+        dictionary = None,
     ) -> None:
         self.f_list, self.ind_list, self.len_list = self._get_lists(Path(tsv_dir), subset)
+        self.labels = None
+        if label_dir is not None:
+            self.labels = self._load_labels(label_dir, subset)
+        self.dictionary = dictionary
 
     def __len__(self):
         return len(self.f_list)
@@ -274,10 +280,28 @@ class AudioDataset(Dataset):
         assert waveform.shape[1] == self.len_list[index]
         return waveform
 
+    def _load_labels(self, label_dir: Path, subset: str) -> np.array:
+        """Load all labels to memory into a numpy array.
+        Args:
+            label_dir (Path): The directory that contains the label file.
+            subset (str): The subset of the dataset. Options: [``train``, ``valid``].
+
+        Returns:
+            (np.array): The numpy arrary that contains the labels for each audio file.
+        """
+        with open(label_dir / f"{subset}.ltr") as f:
+            labels = [line.rstrip() for line in f]
+        return np.asarray(labels, dtype=np.string_)
+
     def __getitem__(self, index):
         waveform = self._load_audio(index)  # (channel, time)
         length = waveform.shape[1]
-        return waveform, length
+        if self.labels is not None:
+            label = [int(self.dictionary.index(ele.decode('utf-8'))) for ele in self.labels[index].split()]
+            label = torch.tensor(label)
+        else:
+            label = None
+        return waveform, length, label
 
 
 def _crop_audio(
@@ -347,12 +371,14 @@ class CollateFnAudio:
             num_frames = max([sample[0].shape[1] for sample in batch])
         else:
             num_frames = min([sample[0].shape[1] for sample in batch])
-        waveforms, lengths = [], []
+        waveforms, lengths, labels = [], [], []
         for sample in batch:
-            waveform, length = sample   # waveform has shape (channel, time)
+            waveform, length, label = sample   # waveform has shape (channel, time)
             waveform, length = _crop_audio(waveform, length, num_frames, self.rand_crop)    # waveform has shape (time,)
             waveforms.append(waveform)
             lengths.append(length)
+            labels.append(label)
+
         # make sure the shapes are the same if not apply zero-padding
         if not self.pad:
             assert all(
@@ -360,4 +386,23 @@ class CollateFnAudio:
             ), "The dimensions of the waveforms should be identical in the same batch."
         waveforms = torch.nn.utils.rnn.pad_sequence(waveforms, batch_first=True)
         lengths = torch.tensor(lengths)
-        return waveforms, lengths
+
+        if labels[0] is not None:
+            num_batch = len(labels)
+            target_lengths = torch.zeros(num_batch).to(torch.int)
+            max_len = 0
+
+            for batch_idx, label in enumerate(labels):
+                target_lengths[batch_idx] += len(label)
+                if len(label) > max_len:
+                    max_len = len(label)
+            
+            # pad_idx = 1
+            labels_ = torch.ones(num_batch, max_len).to(torch.int).to(waveforms.device)
+            for batch_idx, label in enumerate(labels):
+                labels_[batch_idx, :len(label)] = label.clone().detach().to(labels_.device)
+            labels = (labels_, target_lengths)
+        else:
+            labels = None
+            
+        return waveforms, lengths, labels

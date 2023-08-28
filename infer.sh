@@ -8,10 +8,12 @@ set -e
 set -u
 set -o pipefail
 
+# for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
 for subset in "dev_clean"; do
     data_dir=$PWD/data/librispeech/$subset/
-    # finetuned_model=$PWD/exp/infer_model.pth
-    finetuned_model=$PWD/pretrained/wav2vec2_asr-base-ls100.hf.pth
+    finetuned_model=$PWD/exp/infer_model.pth
+    rm -rf $finetuned_model; cp -r $PWD/exp/wav2vec2-base_train_sp0.10_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm/ckpts/pruned_hubert_base.pth $finetuned_model
+    # finetuned_model=$PWD/pretrained/wav2vec2_asr-base-ls100.hf.pth
     inference_result=$PWD/inference_result/
     wordscore=-1
     lmweight=2

@@ -5,3 +5,5 @@ pip install transformers==4.24.0
 git clone https://github.com/facebookresearch/fairseq
 cd fairseq
 pip install --editable ./
+
+pip install editdistance soundfile

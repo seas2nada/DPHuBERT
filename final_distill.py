@@ -13,6 +13,7 @@ from lightning_lite.utilities.rank_zero import _get_rank
 from lightning import (
     DistillModule,
     DistillLoss,
+    CtcLoss,
 )
 from wav2vec2.model import (
     wav2vec2_model,
@@ -92,6 +93,12 @@ def run_train(args):
     
     distill_linear_projs.load_state_dict(student_ckpt["distill_linear_projs"])
 
+    # Create CtcLoss module
+    ctc_loss_criterion = CtcLoss(
+        args.tsv_dir / "dict.ltr.txt",
+    )
+    _LG.info(f"CTC loss module:\n{ctc_loss_criterion}")
+
     # Create DistillLoss module
     distill_loss_criterion = DistillLoss(
         l2_weight=args.l2_weight,
@@ -108,6 +115,7 @@ def run_train(args):
         distill_layers=distill_layers,
         distill_linear_projs=distill_linear_projs,
         distill_loss=distill_loss_criterion,
+        ctc_loss=ctc_loss_criterion,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         warmup_updates=args.warmup_updates,
@@ -141,9 +149,14 @@ def _parse_args():
         help="Path to the directory containing tsv files.",
     )
     parser.add_argument(
+        "--label_dir",
+        type=pathlib.Path,
+        required=True,
+        help="Path to the directory containing label files.",
+    )
+    parser.add_argument(
         "--train_subset",
         default="train100",
-        choices=["train100", "train960"],
         type=str,
         help="The subset name for training. (Default: 'train100')",
     )

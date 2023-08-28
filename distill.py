@@ -13,6 +13,7 @@ from lightning_lite.utilities.rank_zero import _get_rank
 from lightning import (
     DistillModule,
     DistillLoss,
+    CtcLoss,
 )
 from wav2vec2.model import (
     wav2vec2_model,
@@ -89,6 +90,13 @@ def run_train(args):
     student_result = student_model.load_state_dict(student_ckpt['state_dict'], strict=False)
     _LG.info(f"Load pretrained ckpt to student: missing {student_result.missing_keys}, unexpected {student_result.unexpected_keys}")
 
+    # Load student model
+    with torch.no_grad():
+        for name, p in student_model.named_parameters():
+            if "dummy_weight" in name or "hard_concrete" in name:
+                continue
+            p.copy_(student_ckpt['state_dict'][name])
+
     # Create linear layers which transform student hiddens to teacher hiddens
     distill_layer_groups = [[int(l) for l in g.split(",")] for g in args.distill_layers.split(".")]
     _LG.info(f"Distill transformer layers: {distill_layer_groups}")
@@ -116,6 +124,12 @@ def run_train(args):
     else:
         raise ValueError(f"Invalid distill mode: {args.distill_mode}")
 
+    # Create CtcLoss module
+    ctc_loss_criterion = CtcLoss(
+        args.tsv_dir / "dict.ltr.txt",
+    )
+    _LG.info(f"CTC loss module:\n{ctc_loss_criterion}")
+
     # Create DistillLoss module
     distill_loss_criterion = DistillLoss(
         l2_weight=args.l2_weight,
@@ -132,15 +146,17 @@ def run_train(args):
         distill_layers=distill_layers,
         distill_linear_projs=distill_linear_projs,
         distill_loss=distill_loss_criterion,
+        ctc_loss=ctc_loss_criterion,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         warmup_updates=args.warmup_updates,
         max_updates=args.max_updates,
-        use_reg=True,
+        use_reg=False,
         reg_learning_rate=args.reg_learning_rate,
         target_sparsity=args.target_sparsity,
         sparsity_warmup_updates=args.sparsity_warmup_updates,
         tsv_dir=args.tsv_dir,
+        label_dir=args.label_dir,
         train_subset=args.train_subset,
         seconds_per_batch=args.seconds_per_batch,
         num_workers=args.num_workers,
@@ -165,9 +181,14 @@ def _parse_args():
         help="Path to the directory containing tsv files.",
     )
     parser.add_argument(
+        "--label_dir",
+        type=pathlib.Path,
+        help="Path to the directory containing label files.",
+        default=None
+    )
+    parser.add_argument(
         "--train_subset",
         default="train100",
-        choices=["train100", "train960"],
         type=str,
         help="The subset name for training. (Default: 'train100')",
     )

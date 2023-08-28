@@ -127,7 +127,6 @@ class Wav2Vec2Model(Module):
 
     def get_logits(self, encoder_out):
         logits = encoder_out
-        toks = logits[0].argmax(dim=-1).unique_consecutive()
         logits = utils.log_softmax(logits.float(), dim=-1)
 
         return logits

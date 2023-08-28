@@ -4,6 +4,7 @@ from typing import Optional, List, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
@@ -17,6 +18,8 @@ from dataset.audio_dataset import (
     CollateFnAudio,
     AudioDataset,
 )
+
+from fairseq.data import Dictionary
 
 
 class LinearDecayLRScheduler(torch.optim.lr_scheduler._LRScheduler):
@@ -138,6 +141,46 @@ class DistillLoss(nn.Module):
 
         return loss, (loss_mse, loss_l1, loss_cos)
 
+class CtcLoss(nn.Module):
+    def __init__(
+        self, dict_path
+    ):
+        super().__init__()
+        try:
+            target_dictionary = Dictionary.load(str(dict_path))
+            self.target_dictionary = target_dictionary
+        except:
+            self.target_dictionary = None
+            return
+        self.blank_idx = 0
+        self.pad_idx = target_dictionary.pad()
+        self.eos_idx = target_dictionary.eos()
+
+    def forward(self, model, net_output, input_lengths, target, target_lengths):
+        lprobs = model.get_logits(
+            net_output
+        ).contiguous()
+        B, T, C = lprobs.size()
+        lprobs = lprobs.view(T, B, C)   # (T, B, C) from the encoder
+
+        pad_mask = (target != self.pad_idx) & (
+            target != self.eos_idx
+        )
+        targets_flat = target.masked_select(pad_mask)
+
+        with torch.backends.cudnn.flags(enabled=False):
+            loss = F.ctc_loss(
+                lprobs,
+                targets_flat,
+                input_lengths,
+                target_lengths,
+                blank=self.blank_idx,
+                reduction="sum",
+                zero_infinity=False,
+            )
+
+        return loss
+
 
 class DistillModule(pl.LightningModule):
     def __init__(
@@ -149,6 +192,7 @@ class DistillModule(pl.LightningModule):
         distill_layers: List[int],  # layer indices to align, from 0 to num_layers
         distill_linear_projs: nn.ModuleList, # list of linear layers which transform student to teacher
         distill_loss: DistillLoss,
+        ctc_loss: CtcLoss,
         learning_rate: float,
         weight_decay: float,
         warmup_updates: int,
@@ -161,6 +205,7 @@ class DistillModule(pl.LightningModule):
         train_subset: str,
         seconds_per_batch: float,
         num_workers: int,
+        label_dir: Union[str, pathlib.Path] = None,
     ):
         super().__init__()
 
@@ -175,6 +220,7 @@ class DistillModule(pl.LightningModule):
         self.distill_layers = distill_layers
         self.distill_linear_projs = distill_linear_projs
         self.distill_loss = distill_loss
+        self.ctc_loss = ctc_loss
 
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
@@ -196,6 +242,15 @@ class DistillModule(pl.LightningModule):
         self.train_subset = train_subset
         self.seconds_per_batch = seconds_per_batch
         self.num_workers = num_workers
+
+        # supervised training
+        self.label_dir = label_dir
+        if self.ctc_loss.target_dictionary is not None:
+            self.target_dictionary = self.ctc_loss.target_dictionary
+        else:
+            self.target_dictionary = None
+        self.pad = True if self.ctc_loss.target_dictionary is not None else False
+        self.rand_crop = not self.pad
 
     def configure_optimizers(self):
         main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
@@ -243,21 +298,23 @@ class DistillModule(pl.LightningModule):
         return self.target_sparsity * (self.global_step / self.sparsity_warmup_updates)
 
     def _step(self, batch, batch_idx, mode):
-        waveforms, lengths = batch
+        waveforms, lengths, labels = batch
         self.teacher_model.eval()
         with torch.no_grad():
             teacher_hiddens, teacher_lengths = self.teacher_model.extract_features(waveforms, lengths)
+            teacher_last_hidden = teacher_hiddens[-1]
             teacher_hiddens = torch.stack(
                 [teacher_hiddens[idx] for idx in self.distill_layers], dim=1
             )   # (batch, layer, time, feature)
         
         student_hiddens, student_lengths = self.student_model.extract_features(waveforms, lengths)
+        student_last_hidden = student_hiddens[-1]
         new_student_hiddens = []
         for idx, proj in zip(self.distill_layers, self.distill_linear_projs):
             if self.distill_mode == "layer2layer":
                 new_student_hiddens.append(proj(student_hiddens[idx]))
             elif self.distill_mode == "predlayer":
-                new_student_hiddens.append(proj(student_hiddens[-1]))
+                new_student_hiddens.append(proj(student_last_hidden))
             else:
                 raise ValueError(f"Invalid distill mode: {self.distill_mode}")
         student_hiddens = torch.stack(new_student_hiddens, dim=1)   # (batch, layer, time, feature)
@@ -265,9 +322,10 @@ class DistillModule(pl.LightningModule):
         loss_distill, (loss_mse, loss_l1, loss_cos) = self.distill_loss(student_hiddens, teacher_hiddens)
 
         if self.student_model.aux is not None and self.teacher_model.aux is not None:
-            student_pred = self.student_model.aux(student_hiddens[-1])
-            teature_pred = self.teacher_model.aux(teacher_hiddens[-1])
-            loss_distill_pred, (loss_mse_pred, loss_l1_pred, loss_cos_pred) = self.distill_loss(student_pred, teature_pred)
+            with torch.no_grad():
+                teacher_pred = self.teacher_model.aux(teacher_last_hidden)   # (batch, time, feature)
+            student_pred = self.student_model.aux(student_last_hidden)   # (batch, time, feature)
+            loss_distill_pred, (loss_mse_pred, loss_l1_pred, loss_cos_pred) = self.distill_loss(student_pred, teacher_pred)
             for l1, l2 in zip([loss_distill, loss_mse, loss_l1, loss_cos], [loss_distill_pred, loss_mse_pred, loss_l1_pred, loss_cos_pred]):
                 l1 += l2
 
@@ -278,8 +336,18 @@ class DistillModule(pl.LightningModule):
                 + self.lambda2 * (cur_expected_sparsity - cur_target_sparsity)**2
         else:
             loss_reg = 0
+        
+        loss_sup = 0
+        # if labels is not None:
+        #     assert self.student_model.aux is not None
+        #     assert self.ctc_loss is not None
+        #     labels, target_lengths = labels
+        #     loss_sup = self.ctc_loss(self.student_model, student_pred, student_lengths, labels, target_lengths)
+        # else:
+        #     target_lengths = None
+        #     loss_sup = 0
 
-        loss = loss_distill + loss_reg
+        loss = loss_distill + loss_reg + 0.01 * loss_sup
 
         self.log_dict(
             {
@@ -289,6 +357,7 @@ class DistillModule(pl.LightningModule):
                 f"{mode}_loss_l1": loss_l1,
                 f"{mode}_loss_cos": loss_cos,
                 f"{mode}_loss_reg": loss_reg,   # sparsity loss
+                f"{mode}_loss_sup": loss_sup,   # supervised loss
             }
         )
         if mode == "train" and self.use_reg:
@@ -311,7 +380,7 @@ class DistillModule(pl.LightningModule):
         return loss
 
     def train_dataloader(self):
-        dataset = AudioDataset(self.tsv_dir, self.train_subset)
+        dataset = AudioDataset(self.tsv_dir, self.train_subset, label_dir=self.label_dir, dictionary=self.target_dictionary)
         sampler = BucketizeBatchSampler(
             dataset.len_list,
             num_buckets=1000,
@@ -325,13 +394,13 @@ class DistillModule(pl.LightningModule):
         dataloader = DataLoader(
             dataset,
             batch_sampler=sampler,
-            collate_fn=CollateFnAudio(pad=False, rand_crop=True),   # crop to the min length in a mini-batch
+            collate_fn=CollateFnAudio(pad=self.pad, rand_crop=self.rand_crop),   # crop to the min length in a mini-batch
             num_workers=self.num_workers,
         )
-        return dataloader        
+        return dataloader
 
     def val_dataloader(self):
-        dataset = AudioDataset(self.tsv_dir, "valid")
+        dataset = AudioDataset(self.tsv_dir, "valid", label_dir=self.label_dir, dictionary=self.target_dictionary)
         sampler = BucketizeBatchSampler(
             dataset.len_list,
             num_buckets=1000,
@@ -343,7 +412,7 @@ class DistillModule(pl.LightningModule):
         dataloader = DataLoader(
             dataset,
             batch_sampler=sampler,
-            collate_fn=CollateFnAudio(pad=False, rand_crop=True),
+            collate_fn=CollateFnAudio(pad=self.pad, rand_crop=self.rand_crop),
             num_workers=self.num_workers,
         )
         return dataloader
