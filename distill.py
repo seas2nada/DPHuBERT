@@ -151,7 +151,7 @@ def run_train(args):
         weight_decay=args.weight_decay,
         warmup_updates=args.warmup_updates,
         max_updates=args.max_updates,
-        use_reg=False,
+        use_reg=True,
         reg_learning_rate=args.reg_learning_rate,
         target_sparsity=args.target_sparsity,
         sparsity_warmup_updates=args.sparsity_warmup_updates,

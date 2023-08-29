@@ -3,4 +3,4 @@
 if [ -z "${PS1:-}" ]; then
     PS1=__dummy__
 fi
-. /home/Workspace/DPHuBERT/tools/venv/etc/profile.d/conda.sh && conda deactivate && conda activate base
+. /home/Workspace/DPHuBERT/tools/venv/etc/profile.d/conda.sh && conda deactivate && conda activate dphubert

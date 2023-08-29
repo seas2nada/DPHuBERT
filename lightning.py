@@ -159,9 +159,8 @@ class CtcLoss(nn.Module):
     def forward(self, model, net_output, input_lengths, target, target_lengths):
         lprobs = model.get_logits(
             net_output
-        ).contiguous()
-        B, T, C = lprobs.size()
-        lprobs = lprobs.view(T, B, C)   # (T, B, C) from the encoder
+        ).contiguous()  # (B, T, C)
+        lprobs = lprobs.transpose(0, 1)   # (T, B, C) from the encoder
 
         pad_mask = (target != self.pad_idx) & (
             target != self.eos_idx
@@ -337,15 +336,14 @@ class DistillModule(pl.LightningModule):
         else:
             loss_reg = 0
         
-        loss_sup = 0
-        # if labels is not None:
-        #     assert self.student_model.aux is not None
-        #     assert self.ctc_loss is not None
-        #     labels, target_lengths = labels
-        #     loss_sup = self.ctc_loss(self.student_model, student_pred, student_lengths, labels, target_lengths)
-        # else:
-        #     target_lengths = None
-        #     loss_sup = 0
+        if labels is not None:
+            assert self.student_model.aux is not None
+            assert self.ctc_loss is not None
+            labels, target_lengths = labels
+            loss_sup = self.ctc_loss(self.student_model, student_pred, student_lengths, labels, target_lengths)
+        else:
+            target_lengths = None
+            loss_sup = 0
 
         loss = loss_distill + loss_reg + 0.01 * loss_sup
 
