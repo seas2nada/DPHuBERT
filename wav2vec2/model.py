@@ -16,6 +16,8 @@ from torch.nn import Module
 from . import components
 
 from fairseq import utils
+from fairseq.utils import index_put
+from fairseq.data.data_utils import compute_mask_indices
 
 class Wav2Vec2Model(Module):
     """Acoustic model used in *wav2vec 2.0* :cite:`baevski2020wav2vec`.
@@ -55,12 +57,73 @@ class Wav2Vec2Model(Module):
         self.encoder = encoder
         self.aux = aux
 
+        # if mask:
+        #     self.mask_emb = torch.nn.Parameter(
+        #         torch.FloatTensor(768).uniform_()
+        #     )
+    
+    def apply_mask(
+        self,
+        x,
+        padding_mask,
+        mask_indices=None,
+        mask_channel_indices=None,
+    ):
+        B, T, C = x.shape
+
+        mask_prob = 0.65
+        mask_channel_prob = 0.5
+
+        if mask_prob > 0:
+            if mask_indices is None:
+                mask_indices = compute_mask_indices(
+                    (B, T),
+                    padding_mask,
+                    mask_prob,
+                    10,
+                    "static",
+                    0,
+                    min_masks=2,
+                    no_overlap=False,
+                    min_space=1,
+                    require_same_masks=True,
+                    mask_dropout=0.0,
+                )
+                mask_indices = torch.from_numpy(mask_indices).to(x.device)
+            # FIXME: Do we need mask_emb?
+            # x = index_put(x, mask_indices, self.mask_emb)
+            x = index_put(x, mask_indices, 0)
+        else:
+            mask_indices = None
+
+        if mask_channel_prob > 0 and mask_channel_indices is None:
+            mask_channel_indices = compute_mask_indices(
+            (B, C),
+            None,
+            mask_channel_prob,
+            64,
+            "static",
+            0,
+            no_overlap=False,
+            min_space=1,
+            )
+            mask_channel_indices = (
+                torch.from_numpy(mask_channel_indices)
+                .to(x.device)
+                .unsqueeze(1)
+                .expand(-1, T, -1)
+            )
+        x = index_put(x, mask_channel_indices, 0)
+
+        return x, mask_indices
+
     @torch.jit.export
     def extract_features(
         self,
         waveforms: Tensor,
         lengths: Optional[Tensor] = None,
         num_layers: Optional[int] = None,
+        mask: Optional[bool] = True,
     ) -> Tuple[List[Tensor], Optional[Tensor]]:
         """Extract feature vectors from raw waveforms
 
@@ -103,7 +166,19 @@ class Wav2Vec2Model(Module):
             else:
                 waveforms = F.layer_norm(waveforms, waveforms.shape[-1:])
 
+        # forward CNN
         x, lengths = self.feature_extractor(waveforms, lengths)
+
+        # apply mask
+        if mask and self.training:
+            x, _ = self.apply_mask(
+                x,
+                padding_mask=None,
+                mask_indices=None,
+                mask_channel_indices=None,
+            )
+
+        # foward Transformer
         x = self.encoder.extract_features(x, lengths, num_layers)   # (num_layers+1,), including the input
         return x, lengths
     
@@ -182,6 +257,7 @@ def wav2vec2_model(**configs) -> Wav2Vec2Model:
     if "encoder_remaining_heads" in configs:
         return wavlm_model(**configs)
     
+    configs['encoder_layer_drop'] = 0.1
     return wav2vec2_model_original(**configs)
 
 

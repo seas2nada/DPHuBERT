@@ -192,6 +192,7 @@ class DistillModule(pl.LightningModule):
         distill_linear_projs: nn.ModuleList, # list of linear layers which transform student to teacher
         distill_loss: DistillLoss,
         ctc_loss: CtcLoss,
+        ctc_weight: float,
         learning_rate: float,
         weight_decay: float,
         warmup_updates: int,
@@ -250,6 +251,7 @@ class DistillModule(pl.LightningModule):
             self.target_dictionary = None
         self.pad = True if self.ctc_loss.target_dictionary is not None else False
         self.rand_crop = not self.pad
+        self.ctc_weight = ctc_weight
 
     def configure_optimizers(self):
         main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
@@ -300,7 +302,7 @@ class DistillModule(pl.LightningModule):
         waveforms, lengths, labels = batch
         self.teacher_model.eval()
         with torch.no_grad():
-            teacher_hiddens, teacher_lengths = self.teacher_model.extract_features(waveforms, lengths)
+            teacher_hiddens, teacher_lengths = self.teacher_model.extract_features(waveforms, lengths, mask=False)
             teacher_last_hidden = teacher_hiddens[-1]
             teacher_hiddens = torch.stack(
                 [teacher_hiddens[idx] for idx in self.distill_layers], dim=1
@@ -345,7 +347,7 @@ class DistillModule(pl.LightningModule):
             target_lengths = None
             loss_sup = 0
 
-        loss = loss_distill + loss_reg + 0.01 * loss_sup
+        loss = loss_distill + loss_reg + self.ctc_weight * loss_sup
 
         self.log_dict(
             {

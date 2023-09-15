@@ -116,6 +116,7 @@ def run_train(args):
         distill_linear_projs=distill_linear_projs,
         distill_loss=distill_loss_criterion,
         ctc_loss=ctc_loss_criterion,
+        ctc_weight=args.ctc_weight,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         warmup_updates=args.warmup_updates,
@@ -125,6 +126,7 @@ def run_train(args):
         target_sparsity=None,
         sparsity_warmup_updates=None,
         tsv_dir=args.tsv_dir,
+        label_dir=args.label_dir,
         train_subset=args.train_subset,
         seconds_per_batch=args.seconds_per_batch,
         num_workers=args.num_workers,
@@ -295,6 +297,13 @@ def _parse_args():
         type=str,
         choices=["raw", "log_sig"],
         help="Type of the cosine similarity loss."
+    )
+
+    parser.add_argument(
+        "--ctc_weight",
+        default=0.001,
+        type=float,
+        help="Weight for ctc loss."
     )
     
     return parser.parse_args()

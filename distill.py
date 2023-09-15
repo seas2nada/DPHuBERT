@@ -147,6 +147,7 @@ def run_train(args):
         distill_linear_projs=distill_linear_projs,
         distill_loss=distill_loss_criterion,
         ctc_loss=ctc_loss_criterion,
+        ctc_weight=args.ctc_weight,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         warmup_updates=args.warmup_updates,
@@ -355,6 +356,13 @@ def _parse_args():
         default=5000,
         type=int,
         help="Warmup updates for the target sparsity."
+    )
+
+    parser.add_argument(
+        "--ctc_weight",
+        default=0.001,
+        type=float,
+        help="Weight for ctc loss."
     )
     
     return parser.parse_args()
