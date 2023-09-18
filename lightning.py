@@ -193,6 +193,7 @@ class DistillModule(pl.LightningModule):
         distill_loss: DistillLoss,
         ctc_loss: CtcLoss,
         ctc_weight: float,
+        distill_weight: float,
         learning_rate: float,
         weight_decay: float,
         warmup_updates: int,
@@ -252,6 +253,7 @@ class DistillModule(pl.LightningModule):
         self.pad = True if self.ctc_loss.target_dictionary is not None else False
         self.rand_crop = not self.pad
         self.ctc_weight = ctc_weight
+        self.distill_weight = distill_weight
 
     def configure_optimizers(self):
         main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
@@ -347,7 +349,7 @@ class DistillModule(pl.LightningModule):
             target_lengths = None
             loss_sup = 0
 
-        loss = loss_distill + loss_reg + self.ctc_weight * loss_sup
+        loss = self.distill_weight * loss_distill + loss_reg + self.ctc_weight * loss_sup
 
         self.log_dict(
             {

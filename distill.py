@@ -148,6 +148,7 @@ def run_train(args):
         distill_loss=distill_loss_criterion,
         ctc_loss=ctc_loss_criterion,
         ctc_weight=args.ctc_weight,
+        distill_weight=args.distill_weight,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         warmup_updates=args.warmup_updates,
@@ -361,6 +362,13 @@ def _parse_args():
     parser.add_argument(
         "--ctc_weight",
         default=0.001,
+        type=float,
+        help="Weight for ctc loss."
+    )
+
+    parser.add_argument(
+        "--distill_weight",
+        default=1,
         type=float,
         help="Weight for ctc loss."
     )
