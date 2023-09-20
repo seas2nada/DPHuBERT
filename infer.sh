@@ -16,7 +16,7 @@ for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
     # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/ckpts/pruned_hubert_base.pth $finetuned_model
     # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/lr0.0001_up5000_max25000/ckpts/pruned_hubert_base.pth $finetuned_model
     
-    rm -rf $finetuned_model; cp -r $PWD/exp/wav2vec2-base_train_sp0.20_spup10000_lr0.0002_up25000_max100000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0005_dist0.5/ckpts/pruned_hubert_base.pth $finetuned_model
+    rm -rf $finetuned_model; cp -r $PWD/exp/wav2vec2-base_train_sp0.20_spup10000_lr0.0002_up25000_max100000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0005_dist1.0_mask0.75_chanmask0.65/ckpts/pruned_hubert_base.pth $finetuned_model
     # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/lr0.0001_up5000_max25000/ckpts/pruned_hubert_base.pth $finetuned_model
 
     inference_result=$PWD/inference_result/

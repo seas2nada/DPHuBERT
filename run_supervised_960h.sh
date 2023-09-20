@@ -23,7 +23,7 @@ cos_type=raw            # "raw", "log_sig"
 ctc_weight=0.0005
 
 # distill config
-distill_weight=0.5      # distill loss weight
+distill_weight=1.0      # distill loss weight
 lr=0.0002               # learning rate
 warmup=25000            # warmup steps
 max=100000               # max update steps

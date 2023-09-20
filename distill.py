@@ -83,6 +83,8 @@ def run_train(args):
             encoder_prune_attention_layer = "attlayer" in pruning_units,
             encoder_prune_feed_forward_intermediate = "interm" in pruning_units,
             encoder_prune_feed_forward_layer = "ffnlayer" in pruning_units,
+            mask_prob = args.mask_prob,
+            mask_channel_prob = args.mask_channel_prob,
         )
     )
     student_model = wav2vec2_model(**student_config)
@@ -365,10 +367,22 @@ def _parse_args():
         type=float,
         help="Weight for ctc loss."
     )
-
     parser.add_argument(
         "--distill_weight",
         default=1,
+        type=float,
+        help="Weight for ctc loss."
+    )
+
+    parser.add_argument(
+        "--mask_prob",
+        default=0.75,
+        type=float,
+        help="Weight for ctc loss."
+    )
+    parser.add_argument(
+        "--mask_channel_prob",
+        default=0.65,
         type=float,
         help="Weight for ctc loss."
     )

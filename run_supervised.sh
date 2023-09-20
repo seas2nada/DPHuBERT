@@ -20,7 +20,12 @@ cos_weight=1            # weight for cosine similarity
 cos_type=raw            # "raw", "log_sig"
 
 # loss weight config
-ctc_weight=0.0001
+ctc_weight=0.0005
+distill_weight=1.0      # distill loss weight
+
+# masking config
+mask_prob=0.75
+mask_channel_prob=0.65
 
 # distill config
 lr=0.0002               # learning rate
@@ -30,14 +35,13 @@ pruning_units=conv,head,interm      # conv,head,interm,attlayer,ffnlayer
 reg_lr=0.02             # learning rate for regularization params
 target_sparsity=0.20    # final target sparsity
 sparsity_warmup=5000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
-root_dir=exp/wav2vec2-base_${train_subset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_reglr${reg_lr}_${pruning_units}_ctc${ctc_weight}
+root_dir=exp/wav2vec2-base_${train_subset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_reglr${reg_lr}_${pruning_units}_ctc${ctc_weight}_mask${mask_prob}_chanmask${mask_channel_prob}
 
 # final distill config
 final_lr=0.0001         # learning rate for final distillation (training step 2)
 final_warmup=5000       # warmup steps
 final_max=25000         # max update steps
 final_exp_dir=${root_dir}/lr${final_lr}_up${final_warmup}_max${final_max}
-
 
 # Training step 1: distill
 mkdir -p ${root_dir}
@@ -71,6 +75,9 @@ python distill.py \
     --reg_learning_rate ${reg_lr} \
     --target_sparsity ${target_sparsity} \
     --ctc_weight ${ctc_weight} \
+    --distill_weight ${distill_weight} \
+    --mask_prob ${mask_prob} \
+    --mask_channel_prob ${mask_channel_prob} \
     --sparsity_warmup_updates ${sparsity_warmup} 2>&1 | tee ${root_dir}/distill.log || exit 1;
 
 # prune and save model
@@ -108,6 +115,10 @@ python final_distill.py \
     --l2_weight ${l2_weight} \
     --l1_weight ${l1_weight} \
     --cos_weight ${cos_weight} \
+    --ctc_weight ${ctc_weight} \
+    --distill_weight ${distill_weight} \
+    --mask_prob ${mask_prob} \
+    --mask_channel_prob ${mask_channel_prob} \
     --cos_type ${cos_type} 2>&1 | tee ${final_exp_dir}/final_distill.log || exit 1;
 
 # save final model and config

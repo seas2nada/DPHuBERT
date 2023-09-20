@@ -50,6 +50,8 @@ class Wav2Vec2Model(Module):
         feature_extractor: Module,
         encoder: Module,
         aux: Optional[Module] = None,
+        mask_prob: float = 0.65,
+        mask_channel_prob: float = 0.75,
     ):
         super().__init__()
         self.normalize_waveform = normalize_waveform
@@ -61,6 +63,9 @@ class Wav2Vec2Model(Module):
         #     self.mask_emb = torch.nn.Parameter(
         #         torch.FloatTensor(768).uniform_()
         #     )
+
+        self.mask_prob = mask_prob
+        self.mask_channel_prob = mask_channel_prob
     
     def apply_mask(
         self,
@@ -71,8 +76,8 @@ class Wav2Vec2Model(Module):
     ):
         B, T, C = x.shape
 
-        mask_prob = 0.65
-        mask_channel_prob = 0.5
+        mask_prob = self.mask_prob
+        mask_channel_prob = self.mask_channel_prob
 
         if mask_prob > 0:
             if mask_indices is None:
@@ -287,6 +292,8 @@ def wav2vec2_model_original(
     encoder_prune_attention_layer: bool = False,
     encoder_prune_feed_forward_intermediate: bool = False,
     encoder_prune_feed_forward_layer: bool = False,
+    mask_prob: float = 0.75,
+    mask_channel_prob: float = 0.65,
 ) -> Wav2Vec2Model:
     """Builds custom :class:`~torchaudio.models.Wav2Vec2Model`.
 
@@ -441,7 +448,7 @@ def wav2vec2_model_original(
     aux = None
     if aux_num_out is not None:
         aux = torch.nn.Linear(in_features=encoder_embed_dim, out_features=aux_num_out)
-    return Wav2Vec2Model(normalize_waveform, feature_extractor, encoder, aux)
+    return Wav2Vec2Model(normalize_waveform, feature_extractor, encoder, aux, mask_prob, mask_channel_prob)
 
 
 def wav2vec2_base(
