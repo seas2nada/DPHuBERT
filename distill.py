@@ -19,6 +19,8 @@ from wav2vec2.model import (
     wav2vec2_model,
 )
 
+from pytorch_lightning.loggers import WandbLogger
+
 _LG = logging.getLogger(f"{__name__}:{_get_rank()}")
 
 
@@ -35,6 +37,8 @@ def run_train(args):
     model_checkpoint = ModelCheckpoint(dirpath=args.exp_dir / "ckpts", verbose=True)   # only save the latest epoch
     callbacks = [lr_monitor, model_checkpoint]
 
+    wandb_logger = WandbLogger(project=args.project_name, save_dir="logs")
+
     trainer = pl.Trainer(
         default_root_dir=args.exp_dir,
         callbacks=callbacks,
@@ -49,6 +53,7 @@ def run_train(args):
         gradient_clip_val=args.clip_norm,
         log_every_n_steps=args.log_interval,
         precision=args.precision,
+        logger=wandb_logger,
     )
 
     # Create teacher model
@@ -385,6 +390,14 @@ def _parse_args():
         default=0.65,
         type=float,
         help="Weight for ctc loss."
+    )
+
+    # wandb logger args
+    parser.add_argument(
+        "--project-name",
+        default="dphubert2024",
+        type=str,
+        help="project name"
     )
     
     return parser.parse_args()

@@ -8,7 +8,7 @@ set -e
 set -u
 set -o pipefail
 
-model_name=$PWD/exp/wav2vec2-base_train960_sp0.20_spup15000_lr0.0002_up30000_max150000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0005_mask0.2_chanmask0.2/ckpts/pruned_hubert_base.pth
+model_name=$PWD/exp/wav2vec2-base_TED100h_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_distill_weight1.0_reglr0.02_conv,head,interm_ctc0.0005_mask0.2_chanmask0.2/ckpts/pruned_hubert_base.pth
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -18,8 +18,8 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
-    data_dir=$PWD/data/librispeech/$subset/
+for subset in "valid"; do
+    data_dir=$PWD/data/TED/ted-100h/
     finetuned_model=$PWD/exp/infer_model.pth
     # finetuned_model=$PWD/pretrained/wav2vec2_asr-base-ls960.hf.pth
 

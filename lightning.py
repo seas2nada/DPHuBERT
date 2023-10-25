@@ -21,6 +21,10 @@ from dataset.audio_dataset import (
 
 from fairseq.data import Dictionary
 
+import editdistance
+
+import numpy as np
+import random
 
 class LinearDecayLRScheduler(torch.optim.lr_scheduler._LRScheduler):
     """Linear learning rate scheduler with warm up."""
@@ -207,6 +211,7 @@ class DistillModule(pl.LightningModule):
         seconds_per_batch: float,
         num_workers: int,
         label_dir: Union[str, pathlib.Path] = None,
+        spk2info: Union[str, pathlib.Path] = None,
     ):
         super().__init__()
 
@@ -255,6 +260,9 @@ class DistillModule(pl.LightningModule):
         self.ctc_weight = ctc_weight
         self.distill_weight = distill_weight
 
+        self.val_wer_sum = 0.0
+        self.val_batch_count = 0
+
     def configure_optimizers(self):
         main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
         main_params.extend(list(self.distill_linear_projs.parameters()))
@@ -300,8 +308,10 @@ class DistillModule(pl.LightningModule):
             return self.target_sparsity
         return self.target_sparsity * (self.global_step / self.sparsity_warmup_updates)
 
-    def _step(self, batch, batch_idx, mode):
+    def _step(self, batch, batch_idx, mode, return_wer=False):
         waveforms, lengths, labels = batch
+        st_waveforms = waveforms
+
         self.teacher_model.eval()
         with torch.no_grad():
             teacher_hiddens, teacher_lengths = self.teacher_model.extract_features(waveforms, lengths, mask=False)
@@ -310,7 +320,7 @@ class DistillModule(pl.LightningModule):
                 [teacher_hiddens[idx] for idx in self.distill_layers], dim=1
             )   # (batch, layer, time, feature)
         
-        student_hiddens, student_lengths = self.student_model.extract_features(waveforms, lengths)
+        student_hiddens, student_lengths = self.student_model.extract_features(st_waveforms, lengths)
         student_last_hidden = student_hiddens[-1]
         new_student_hiddens = []
         for idx, proj in zip(self.distill_layers, self.distill_linear_projs):
@@ -371,15 +381,243 @@ class DistillModule(pl.LightningModule):
                     'lambda2': self.lambda2,
                 },
             )
-        return loss
+
+        if return_wer:
+            if labels is not None:
+                tot_err = 0
+                tot_len = 0
+                for batch_idx, pred in enumerate(student_pred):
+                    toks = pred.argmax(dim=-1).unique_consecutive()
+                    toks = toks[toks != self.ctc_loss.blank_idx]
+
+                    label = labels[batch_idx]
+                    label = label[label != 1]
+                    
+                    tok_string = "".join([self.target_dictionary.symbols[int(toks[i])] for i in range(len(toks))])
+                    tar_string = "".join([self.target_dictionary.symbols[int(label[i])] for i in range(len(label))])
+
+                    tok_string = tok_string.split("|")[:-1]
+                    tar_string = tar_string.split("|")[:-1]
+
+                    tot_err += editdistance.eval(tok_string, tar_string)
+                    tot_len += len(tar_string)
+                
+                wer = tot_err / tot_len
+            else:
+                wer = 0
+            return loss, wer
+        else:
+            return loss
 
     def training_step(self, batch, batch_idx):
         loss = self._step(batch, batch_idx, mode="train")
         return loss
 
     def validation_step(self, batch, batch_idx):
-        loss = self._step(batch, batch_idx, mode="valid")
+        loss, wer = self._step(batch, batch_idx, mode="valid", return_wer=True)
+
+        self.val_wer_sum += wer
+        self.val_batch_count += 1
+
         return loss
+
+    def validation_epoch_end(self, outputs):
+        # Calculate average WER at the end of the validation epoch
+        avg_wer = self.val_wer_sum / self.val_batch_count if self.val_batch_count > 0 else 0.0
+
+        # Log the average WER using self.log
+        self.log("val_wer", avg_wer, on_step=False, on_epoch=True)
+
+        # Reset the tracking variables for the next epoch
+        self.val_wer_sum = 0.0
+        self.val_batch_count = 0
+
+    def train_dataloader(self):
+        dataset = AudioDataset(self.tsv_dir, self.train_subset, label_dir=self.label_dir, dictionary=self.target_dictionary)
+        sampler = BucketizeBatchSampler(
+            dataset.len_list,
+            num_buckets=1000,
+            max_token_count=self.seconds_per_batch * 16000,
+            min_len=32000,
+            max_len=250000,
+            shuffle=False,
+        )
+        sampler = DistributedBatchSampler(sampler, shuffle=True)
+        sampler.set_epoch(self.current_epoch)
+        dataloader = DataLoader(
+            dataset,
+            batch_sampler=sampler,
+            collate_fn=CollateFnAudio(pad=self.pad, rand_crop=self.rand_crop),   # crop to the min length in a mini-batch
+            num_workers=self.num_workers,
+        )
+        return dataloader
+
+    def val_dataloader(self):
+        dataset = AudioDataset(self.tsv_dir, "valid", label_dir=self.label_dir, dictionary=self.target_dictionary)
+        sampler = BucketizeBatchSampler(
+            dataset.len_list,
+            num_buckets=1000,
+            max_token_count=self.seconds_per_batch * 16000,
+            min_len=32000,
+            max_len=250000,
+            shuffle=False,
+        )
+        dataloader = DataLoader(
+            dataset,
+            batch_sampler=sampler,
+            collate_fn=CollateFnAudio(pad=self.pad, rand_crop=self.rand_crop),
+            num_workers=self.num_workers,
+        )
+        return dataloader
+
+class CTCModule(pl.LightningModule):
+    def __init__(
+        self,
+        *,
+        student_model: Wav2Vec2Model,
+        ctc_loss: CtcLoss,
+        ctc_weight: float,
+        learning_rate: float,
+        weight_decay: float,
+        warmup_updates: int,
+        max_updates: int,
+        tsv_dir: Union[str, pathlib.Path],
+        train_subset: str,
+        seconds_per_batch: float,
+        num_workers: int,
+        label_dir: Union[str, pathlib.Path] = None,
+        spk2info: Union[str, pathlib.Path] = None,
+    ):
+        super().__init__()
+
+        self.student_model = student_model
+
+        self.original_num_params = sum(p.numel() for p in student_model.parameters())
+
+        self.ctc_loss = ctc_loss
+
+        self.learning_rate = learning_rate
+        self.weight_decay = weight_decay
+        self.warmup_updates = warmup_updates
+        self.max_updates = max_updates
+
+        # dataset related
+        self.tsv_dir = tsv_dir
+        self.train_subset = train_subset
+        self.seconds_per_batch = seconds_per_batch
+        self.num_workers = num_workers
+
+        # supervised training
+        self.label_dir = label_dir
+        if self.ctc_loss.target_dictionary is not None:
+            self.target_dictionary = self.ctc_loss.target_dictionary
+        else:
+            self.target_dictionary = None
+        self.pad = True if self.ctc_loss.target_dictionary is not None else False
+        self.rand_crop = not self.pad
+        self.ctc_weight = ctc_weight
+
+        self.val_wer_sum = 0.0
+        self.val_batch_count = 0
+
+    def configure_optimizers(self):
+        main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
+        pgs = [
+            {
+                'params': main_params,
+                'lr': self.learning_rate,
+                'weight_decay': self.weight_decay,
+                'name': 'main_params',
+            },
+        ]
+        
+        optimizer = torch.optim.AdamW(pgs)
+        lr_scheduler = LinearDecayLRScheduler(
+            optimizer, warmup_updates=self.warmup_updates, max_updates=self.max_updates
+        )
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                "scheduler": lr_scheduler,
+                "interval": "step",
+            },
+        }
+
+    def _step(self, batch, batch_idx, mode, return_wer=False):
+        waveforms, lengths, labels = batch
+        st_waveforms = waveforms
+        
+        student_hiddens, student_lengths = self.student_model.extract_features(st_waveforms, lengths)
+        student_last_hidden = student_hiddens[-1]
+
+        student_pred = self.student_model.aux(student_last_hidden)   # (batch, time, feature)
+        
+        if labels is not None:
+            assert self.student_model.aux is not None
+            assert self.ctc_loss is not None
+            labels, target_lengths = labels
+            loss_sup = self.ctc_loss(self.student_model, student_pred, student_lengths, labels, target_lengths)
+        else:
+            target_lengths = None
+            loss_sup = 0
+
+        loss = self.ctc_weight * loss_sup
+
+        self.log_dict(
+            {
+                f"{mode}_loss": loss,   # total loss
+                f"{mode}_loss_sup": loss_sup,   # supervised loss
+            }
+        )
+
+        if return_wer:
+            if labels is not None:
+                tot_err = 0
+                tot_len = 0
+                for batch_idx, pred in enumerate(student_pred):
+                    toks = pred.argmax(dim=-1).unique_consecutive()
+                    toks = toks[toks != self.ctc_loss.blank_idx]
+
+                    label = labels[batch_idx]
+                    label = label[label != 1]
+                    
+                    tok_string = "".join([self.target_dictionary.symbols[int(toks[i])] for i in range(len(toks))])
+                    tar_string = "".join([self.target_dictionary.symbols[int(label[i])] for i in range(len(label))])
+
+                    tok_string = tok_string.split("|")[:-1]
+                    tar_string = tar_string.split("|")[:-1]
+
+                    tot_err += editdistance.eval(tok_string, tar_string)
+                    tot_len += len(tar_string)
+                
+                wer = tot_err / tot_len
+            else:
+                wer = 0
+        else:
+            return loss
+
+    def training_step(self, batch, batch_idx):
+        loss = self._step(batch, batch_idx, mode="train")
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        loss, wer = self._step(batch, batch_idx, mode="valid", return_wer=True)
+
+        self.val_wer_sum += wer
+        self.val_batch_count += 1
+
+        return loss
+
+    def validation_epoch_end(self, outputs):
+        # Calculate average WER at the end of the validation epoch
+        avg_wer = self.val_wer_sum / self.val_batch_count if self.val_batch_count > 0 else 0.0
+
+        # Log the average WER using self.log
+        self.log("val_wer", avg_wer, on_step=False, on_epoch=True)
+
+        # Reset the tracking variables for the next epoch
+        self.val_wer_sum = 0.0
+        self.val_batch_count = 0
 
     def train_dataloader(self):
         dataset = AudioDataset(self.tsv_dir, self.train_subset, label_dir=self.label_dir, dictionary=self.target_dictionary)
