@@ -1,4 +1,4 @@
-"""Perform distillation and pruning."""
+"""Perform distillation for the pruned model."""
 
 import logging
 import pathlib
@@ -11,6 +11,7 @@ from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning_lite.utilities.rank_zero import _get_rank
 
 from lightning import (
+    CTCModule,
     DistillModule,
     DistillLoss,
     CtcLoss,
@@ -19,14 +20,7 @@ from wav2vec2.model import (
     wav2vec2_model,
 )
 
-from pytorch_lightning.loggers import WandbLogger
-
 _LG = logging.getLogger(f"{__name__}:{_get_rank()}")
-
-
-def _init_layer_transform(module: nn.Linear):
-    module.weight.data.copy_(torch.eye(len(module.weight)))
-    module.bias.data.fill_(0)
 
 
 def run_train(args):
@@ -36,8 +30,6 @@ def run_train(args):
     lr_monitor = LearningRateMonitor()  # log learning rates for all param groups
     model_checkpoint = ModelCheckpoint(dirpath=args.exp_dir / "ckpts", verbose=True)   # only save the latest epoch
     callbacks = [lr_monitor, model_checkpoint]
-
-    wandb_logger = WandbLogger(project=args.project_name, save_dir="logs")
 
     trainer = pl.Trainer(
         default_root_dir=args.exp_dir,
@@ -53,83 +45,14 @@ def run_train(args):
         gradient_clip_val=args.clip_norm,
         log_every_n_steps=args.log_interval,
         precision=args.precision,
-        logger=wandb_logger,
     )
-
-    # Create teacher model
-    teacher_ckpt = torch.load(args.teacher_ckpt, map_location="cpu")
-    teacher_model = wav2vec2_model(**teacher_ckpt['config'])
-    _LG.info(f"Teacher model:\n{teacher_model}")
-    teacher_result = teacher_model.load_state_dict(teacher_ckpt['state_dict'], strict=False)
-    _LG.info(f"Load pretrained ckpt to teacher: missing {teacher_result.missing_keys}, unexpected {teacher_result.unexpected_keys}")
-
-    # Load teacher model
-    with torch.no_grad():
-        for name, p in teacher_model.named_parameters():
-            if "dummy_weight" in name:
-                continue
-            p.copy_(teacher_ckpt['state_dict'][name])
-
-    # Freeze teacher model
-    for p in teacher_model.parameters():
-        p.requires_grad = False
-    _LG.info("Freeze parameters of the teacher model by setting requires_grad=False")
-    teacher_model.eval()
     
     # Create student model
-    student_ckpt = torch.load(args.student_ckpt, map_location="cpu")
-    pruning_units = args.pruning_units.split(",")
-    _LG.info(f"Pruning units: {pruning_units}")
-    student_config = student_ckpt['config']
-    student_config.update(
-        dict(
-            extractor_prune_conv_channels = "conv" in pruning_units,
-            encoder_prune_attention_heads = "head" in pruning_units,
-            encoder_prune_attention_layer = "attlayer" in pruning_units,
-            encoder_prune_feed_forward_intermediate = "interm" in pruning_units,
-            encoder_prune_feed_forward_layer = "ffnlayer" in pruning_units,
-            mask_prob = args.mask_prob,
-            mask_channel_prob = args.mask_channel_prob,
-        )
-    )
-    student_model = wav2vec2_model(**student_config)
+    student_ckpt = torch.load(args.student_ckpt, map_location='cpu')
+    student_model = wav2vec2_model(**student_ckpt["config"])
     _LG.info(f"Student model:\n{student_model}")
-    student_result = student_model.load_state_dict(student_ckpt['state_dict'], strict=False)
+    student_result = student_model.load_state_dict(student_ckpt["state_dict"], strict=False)
     _LG.info(f"Load pretrained ckpt to student: missing {student_result.missing_keys}, unexpected {student_result.unexpected_keys}")
-
-    # Load student model
-    with torch.no_grad():
-        for name, p in student_model.named_parameters():
-            if "dummy_weight" in name or "hard_concrete" in name:
-                continue
-            p.copy_(student_ckpt['state_dict'][name])
-
-    # Create linear layers which transform student hiddens to teacher hiddens
-    distill_layer_groups = [[int(l) for l in g.split(",")] for g in args.distill_layers.split(".")]
-    _LG.info(f"Distill transformer layers: {distill_layer_groups}")
-    distill_layers = []
-    for g in distill_layer_groups:
-        distill_layers.extend(g)
-    student_embed_dim = student_model.encoder.feature_projection.projection.out_features
-    teacher_embed_dim = teacher_model.encoder.feature_projection.projection.out_features
-
-    if args.distill_mode == "layer2layer":
-        distill_linear_projs = nn.ModuleList()
-        for g in distill_layer_groups:      # layers in the same group share a linear layer
-            tmp_linear = nn.Linear(student_embed_dim, teacher_embed_dim)
-            _init_layer_transform(tmp_linear)
-            for _ in range(len(g)):
-                distill_linear_projs.append(tmp_linear)
-    elif args.distill_mode == "predlayer":      # same as DistilHuBERT
-        # use independent linear layers, cannot be shared
-        distill_linear_projs = nn.ModuleList(
-            nn.Sequential(
-                nn.Linear(student_embed_dim, teacher_embed_dim),
-                nn.GELU(),
-            ) for _ in range(len(distill_layers))
-        )
-    else:
-        raise ValueError(f"Invalid distill mode: {args.distill_mode}")
 
     # Create CtcLoss module
     ctc_loss_criterion = CtcLoss(
@@ -137,50 +60,30 @@ def run_train(args):
     )
     _LG.info(f"CTC loss module:\n{ctc_loss_criterion}")
 
-    # Create DistillLoss module
-    distill_loss_criterion = DistillLoss(
-        l2_weight=args.l2_weight,
-        l1_weight=args.l1_weight,
-        cos_weight=args.cos_weight,
-        cos_type=args.cos_type,
-    )
-    _LG.info(f"Distill loss module:\n{distill_loss_criterion}")
-
-    distill_module = DistillModule(
-        teacher_model=teacher_model,
+    ctc_module = CTCModule(
         student_model=student_model,
-        distill_mode=args.distill_mode,
-        distill_layers=distill_layers,
-        distill_linear_projs=distill_linear_projs,
-        distill_loss=distill_loss_criterion,
         ctc_loss=ctc_loss_criterion,
         ctc_weight=args.ctc_weight,
-        distill_weight=args.distill_weight,
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         warmup_updates=args.warmup_updates,
         max_updates=args.max_updates,
-        use_reg=True,
-        reg_learning_rate=args.reg_learning_rate,
-        target_sparsity=args.target_sparsity,
-        sparsity_warmup_updates=args.sparsity_warmup_updates,
         tsv_dir=args.tsv_dir,
         label_dir=args.label_dir,
         train_subset=args.train_subset,
         seconds_per_batch=args.seconds_per_batch,
         num_workers=args.num_workers,
-        param_reg_type=args.param_reg_type,
     )
 
     trainer.fit(
-        distill_module, 
+        ctc_module, 
         ckpt_path=args.resume_checkpoint,
     )
 
 
 def _parse_args():
     parser = ArgumentParser(
-        description="Joint distillation and pruning of HuBERT",
+        description="Distill the pruned model.",
     )
 
     # dataset and dataloader related
@@ -193,8 +96,8 @@ def _parse_args():
     parser.add_argument(
         "--label_dir",
         type=pathlib.Path,
+        required=True,
         help="Path to the directory containing label files.",
-        default=None
     )
     parser.add_argument(
         "--train_subset",
@@ -224,9 +127,8 @@ def _parse_args():
     )
     parser.add_argument(
         "--exp_dir",
-        default=pathlib.Path("./exp"),
         type=pathlib.Path,
-        help="Directory to save checkpoints and logs to. (Default: './exp')",
+        help="Suffix of the exp directory name."
     )
     parser.add_argument(
         "--log_interval",
@@ -236,9 +138,9 @@ def _parse_args():
     )
     parser.add_argument(
         "--learning_rate",
-        default=0.0002,
+        default=0.0001,
         type=float,
-        help="The peak learning rate. (Default: 0.0002)",
+        help="The peak learning rate. (Default: 0.0001)",
     )
     parser.add_argument(
         "--weight_decay",
@@ -248,15 +150,15 @@ def _parse_args():
     )
     parser.add_argument(
         "--warmup_updates",
-        default=15000,
+        default=5000,
         type=int,
-        help="Number of steps for warm up the learning rate. (Default: 15000)",
+        help="Number of steps for warm up the learning rate. (Default: 5000)",
     )
     parser.add_argument(
         "--max_updates",
-        default=50000,
+        default=25000,
         type=int,
-        help="Total number of training steps. (Default: 50000)",
+        help="Total number of training steps. (Default: 25000)",
     )
     parser.add_argument(
         "--clip_norm",
@@ -298,7 +200,6 @@ def _parse_args():
     )
     parser.add_argument(
         "--student_ckpt",
-        default=pathlib.Path("pretrained_ckpts/hubert-base-ls960.pth"),
         type=pathlib.Path,
         help="Path to the student model checkpoint (for initialization)."
     )
@@ -341,32 +242,6 @@ def _parse_args():
         help="Type of the cosine similarity loss."
     )
 
-    # pruning related
-    parser.add_argument(
-        "--pruning_units",
-        default="conv,head,interm,attlayer,ffnlayer",
-        type=str,
-        help="Pruning units as a comma-separated list."
-    )
-    parser.add_argument(
-        "--reg_learning_rate",
-        default=0.02,
-        type=float,
-        help="Regularization learning rate."
-    )
-    parser.add_argument(
-        "--target_sparsity",
-        default=0.75,
-        type=float,
-        help="Target sparsity."
-    )
-    parser.add_argument(
-        "--sparsity_warmup_updates",
-        default=5000,
-        type=int,
-        help="Warmup updates for the target sparsity."
-    )
-
     parser.add_argument(
         "--ctc_weight",
         default=0.001,
@@ -391,20 +266,6 @@ def _parse_args():
         default=0.65,
         type=float,
         help="Weight for ctc loss."
-    )
-    parser.add_argument(
-        "--param_reg_type",
-        default="ema",
-        type=str,
-        help="Method for parameters regularization"
-    )
-
-    # wandb logger args
-    parser.add_argument(
-        "--project_name",
-        default="dphubert2024",
-        type=str,
-        help="project name"
     )
     
     return parser.parse_args()

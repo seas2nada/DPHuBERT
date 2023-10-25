@@ -26,6 +26,8 @@ import editdistance
 import numpy as np
 import random
 
+from torch_ema import ExponentialMovingAverage
+
 class LinearDecayLRScheduler(torch.optim.lr_scheduler._LRScheduler):
     """Linear learning rate scheduler with warm up."""
 
@@ -212,6 +214,7 @@ class DistillModule(pl.LightningModule):
         num_workers: int,
         label_dir: Union[str, pathlib.Path] = None,
         spk2info: Union[str, pathlib.Path] = None,
+        param_reg_type: str = "ema",
     ):
         super().__init__()
 
@@ -263,6 +266,12 @@ class DistillModule(pl.LightningModule):
         self.val_wer_sum = 0.0
         self.val_batch_count = 0
 
+        self.param_reg_type = param_reg_type
+        if param_reg_type == "ema":
+            self.ema = ExponentialMovingAverage(self.student_model.parameters(), decay=0.99)
+        elif param_reg_type == "l2":
+            self.teacher_state_dict = self.teacher_model.state_dict()
+
     def configure_optimizers(self):
         main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
         main_params.extend(list(self.distill_linear_projs.parameters()))
@@ -303,6 +312,15 @@ class DistillModule(pl.LightningModule):
             },
         }
 
+    def optimizer_step(self, *args, **kwargs):
+        super().optimizer_step(*args, **kwargs)
+        if self.param_reg_type == "ema":
+            if self.ema.shadow_params[0].device != self.device:
+                for i, p in enumerate(self.ema.shadow_params):
+                    self.ema.shadow_params[i] = p.to(self.device)
+
+            self.ema.update(self.student_model.parameters())
+
     def _get_target_sparsity(self):
         if self.global_step >= self.sparsity_warmup_updates:
             return self.target_sparsity
@@ -311,6 +329,32 @@ class DistillModule(pl.LightningModule):
     def _step(self, batch, batch_idx, mode, return_wer=False):
         waveforms, lengths, labels = batch
         st_waveforms = waveforms
+
+        ### Gaussian noise distillation ###
+        # mean_waveforms = torch.mean(waveforms)
+        # var_waveforms = torch.var(waveforms)
+        # waveforms = torch.normal(mean=mean_waveforms, std=var_waveforms**0.5, size=waveforms.size(), dtype=waveforms.dtype, device=waveforms.device)
+        # for i, length in enumerate(lengths):
+        #     if length == waveforms.shape[1]:
+        #         continue
+        #     else:
+        #         waveforms[i, length + 1:] = 0.0
+
+        ### Gaussian noise augmentation ###
+        # st_waveforms = waveforms.clone()
+        # noises = torch.normal(mean=0, std=1, size=waveforms.size(), dtype=waveforms.dtype, device=waveforms.device)
+        # for i, length in enumerate(lengths):
+        #     if length == waveforms.shape[1]:
+        #         continue
+        #     else:
+        #         waveforms[i, length + 1:] = 0.0
+        #     # Computing the required SNR
+        #     snr_db = np.random.uniform(5, 15)
+        #     signal_rms = torch.sqrt(torch.mean(st_waveforms[i] ** 2))
+        #     noise_rms = signal_rms / (10 ** (snr_db / 20.0))
+        #     scaled_noise = noises[i] * noise_rms / torch.std(noises[i])
+        #     # Mixing speech with noise
+        #     st_waveforms[i] += scaled_noise
 
         self.teacher_model.eval()
         with torch.no_grad():
@@ -359,7 +403,16 @@ class DistillModule(pl.LightningModule):
             target_lengths = None
             loss_sup = 0
 
-        loss = self.distill_weight * loss_distill + loss_reg + self.ctc_weight * loss_sup
+        # Params L2-reg loss
+        if self.param_reg_type == "l2":
+            l2_reg = 0.0
+            for n, p in self.student_model.named_parameters():
+                if "hard_concrete" not in n:
+                    l2_reg += torch.norm(p - self.teacher_state_dict[n].to(p.device), p=2)
+
+        self.l2_weight = 0.001
+        # loss = self.distill_weight * loss_distill + loss_reg + self.ctc_weight * loss_sup
+        loss = self.distill_weight * loss_distill + loss_reg + self.ctc_weight * loss_sup + self.l2_weight * l2_reg
 
         self.log_dict(
             {
@@ -370,6 +423,7 @@ class DistillModule(pl.LightningModule):
                 f"{mode}_loss_cos": loss_cos,
                 f"{mode}_loss_reg": loss_reg,   # sparsity loss
                 f"{mode}_loss_sup": loss_sup,   # supervised loss
+                f"{mode}_l2_reg": l2_reg,
             }
         )
         if mode == "train" and self.use_reg:

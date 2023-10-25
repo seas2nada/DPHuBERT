@@ -7,3 +7,4 @@ cd fairseq
 pip install --editable ./
 
 pip install editdistance soundfile
+pip install wandb
