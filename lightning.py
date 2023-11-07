@@ -271,6 +271,10 @@ class DistillModule(pl.LightningModule):
             self.ema = ExponentialMovingAverage(self.student_model.parameters(), decay=0.99)
         elif param_reg_type == "l2":
             self.teacher_state_dict = self.teacher_model.state_dict()
+            with torch.no_grad():
+                for n, p in self.student_model.named_parameters():
+                    if "log_alpha" in n:
+                        self.teacher_state_dict[n] = p.data
 
     def configure_optimizers(self):
         main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
@@ -313,13 +317,18 @@ class DistillModule(pl.LightningModule):
         }
 
     def optimizer_step(self, *args, **kwargs):
+        if self.param_reg_type == "l2":
+            for n, p in self.student_model.named_parameters():
+                if "log_alpha" in n:
+                    self.teacher_state_dict[n] = p.data
+
         super().optimizer_step(*args, **kwargs)
+        
         if self.param_reg_type == "ema":
             if self.ema.shadow_params[0].device != self.device:
                 for i, p in enumerate(self.ema.shadow_params):
                     self.ema.shadow_params[i] = p.to(self.device)
-
-            self.ema.update(self.student_model.parameters())
+                self.ema.update(self.student_model.parameters())
 
     def _get_target_sparsity(self):
         if self.global_step >= self.sparsity_warmup_updates:
@@ -407,11 +416,21 @@ class DistillModule(pl.LightningModule):
         if self.param_reg_type == "l2":
             l2_reg = 0.0
             for n, p in self.student_model.named_parameters():
-                if "hard_concrete" not in n:
+                if "log_alpha" not in n:
+                    l2_reg += torch.norm(p - self.teacher_state_dict[n].to(p.device), p=2)
+                elif "log_alpha" in n and self.global_step >= self.sparsity_warmup_updates:
                     l2_reg += torch.norm(p - self.teacher_state_dict[n].to(p.device), p=2)
 
+        # cosine_sims = 0
+        # for sp, tp in zip(student_pred, teacher_pred):
+        #     cosine_sim = F.cosine_similarity(sp, tp, dim=-1)
+        #     cosine_sim = cosine_sim.mean()
+        #     cosine_sims += cosine_sim
+        # l2_weight = cosine_sims / len(student_pred)
+        # self.l2_weight = 0.001 * (1 - l2_weight)
+        
         self.l2_weight = 0.001
-        # loss = self.distill_weight * loss_distill + loss_reg + self.ctc_weight * loss_sup
+        
         loss = self.distill_weight * loss_distill + loss_reg + self.ctc_weight * loss_sup + self.l2_weight * l2_reg
 
         self.log_dict(
