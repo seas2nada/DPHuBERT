@@ -275,6 +275,7 @@ class DistillModule(pl.LightningModule):
                 for n, p in self.student_model.named_parameters():
                     if "log_alpha" in n:
                         self.teacher_state_dict[n] = p.data
+            self.M = dict()
 
     def configure_optimizers(self):
         main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
@@ -416,20 +417,22 @@ class DistillModule(pl.LightningModule):
         if self.param_reg_type == "l2":
             l2_reg = 0.0
             for n, p in self.student_model.named_parameters():
+                reg_p = self.teacher_state_dict[n].to(p.device)
+                if n in self.M:
+                    M = self.M[n]
+                else:
+                    M = 0
                 if "log_alpha" not in n:
-                    l2_reg += torch.norm(p - self.teacher_state_dict[n].to(p.device), p=2)
+                    l2_reg += torch.norm(p - (M * reg_p + (1-M) * p), p=2)
                 elif "log_alpha" in n and self.global_step >= self.sparsity_warmup_updates:
-                    l2_reg += torch.norm(p - self.teacher_state_dict[n].to(p.device), p=2)
+                    l2_reg += torch.norm(p - (M * reg_p + (1-M) * p), p=2)
 
-        # cosine_sims = 0
-        # for sp, tp in zip(student_pred, teacher_pred):
-        #     cosine_sim = F.cosine_similarity(sp, tp, dim=-1)
-        #     cosine_sim = cosine_sim.mean()
-        #     cosine_sims += cosine_sim
-        # l2_weight = cosine_sims / len(student_pred)
-        # self.l2_weight = 0.001 * (1 - l2_weight)
+                # if "log_alpha" not in n:
+                #     l2_reg += torch.norm(p - self.teacher_state_dict[n].to(p.device), p=2)
+                # elif "log_alpha" in n and self.global_step >= self.sparsity_warmup_updates:
+                #     l2_reg += torch.norm(p - self.teacher_state_dict[n].to(p.device), p=2)
         
-        self.l2_weight = 0.001
+        self.l2_weight = 0.0006
         
         loss = self.distill_weight * loss_distill + loss_reg + self.ctc_weight * loss_sup + self.l2_weight * l2_reg
 
@@ -481,6 +484,26 @@ class DistillModule(pl.LightningModule):
             return loss, wer
         else:
             return loss
+
+    def on_after_backward(self):
+        # This hook is called after loss.backward() and before optimizer.step()
+        if self.param_reg_type == "l2":
+            for n, p in self.student_model.named_parameters():
+                if p.requires_grad and p.grad is not None:
+                    # Flatten the gradient to work with it as a single vector
+                    grad_flat = p.grad.flatten()
+                    
+                    # Determine the threshold for the lowest 20% of gradient elements
+                    threshold = grad_flat.abs().quantile(0.1)
+                    # Create a mask where elements with gradients in the highest 80% are set to 1, others are set to 0
+                    mask = (grad_flat.abs() >= threshold).float().view_as(p)
+
+                    # # Determine the threshold for the lowest 90% of gradient elements
+                    # threshold = grad_flat.abs().quantile(0.9)
+                    # # Create a mask where elements with gradients in the lowest 90% are set to 1, others are set to 0
+                    # mask = (grad_flat.abs() <= threshold).float().view_as(p)
+
+                    self.M[n] = mask
 
     def training_step(self, batch, batch_idx):
         loss = self._step(batch, batch_idx, mode="train")

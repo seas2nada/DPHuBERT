@@ -118,7 +118,7 @@ class Wav2Vec2Model(Module):
                 .unsqueeze(1)
                 .expand(-1, T, -1)
             )
-        x = index_put(x, mask_channel_indices, 0)
+            x = index_put(x, mask_channel_indices, 0)
 
         return x, mask_indices
 

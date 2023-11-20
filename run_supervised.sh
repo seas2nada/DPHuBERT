@@ -8,17 +8,17 @@
 set -x
 
 # shared config
-# dataset=TED100h
-dataset=libri100h
-tsv_dir=data/librispeech/train_clean_100        # data path
-# tsv_dir=data/TED/ted-100h        # data path
+dataset=TED100h
+# dataset=libri100h
+# tsv_dir=data/librispeech/train_clean_100        # data path
+tsv_dir=data/TED/ted-100h        # data path
 train_subset=train          # train subset name: train960, train100
 teacher_ckpt=pretrained/wav2vec2_asr-base-ls100.hf.pth    # checkpoint path
 # teacher_ckpt=pretrained/wav2vec2_asr-base-ted100.hf.pth
 student_ckpt=${teacher_ckpt}    # student initialization, same as teacher
 distill_layers=0.4,8,12         # use period to separate groups where each group shares the same linear layer: [0], [4, 8, 12]
 distill_mode=layer2layer        # "layer2layer", "predlayer"
-l2_weight=1.0             # weight for L2 loss
+l2_weight=0.0             # weight for L2 loss
 l1_weight=1.0             # weight for L1 loss
 cos_weight=1.0            # weight for cosine similarity
 cos_type=raw            # "raw", "log_sig"
@@ -34,7 +34,7 @@ mask_channel_prob=0.2
 # distill config
 lr=0.0002               # learning rate
 warmup=15000            # warmup steps
-max=50000               # max update steps
+max=80000               # max update steps
 pruning_units=conv,head,interm      # conv,head,interm,attlayer,ffnlayer
 reg_lr=0.02             # learning rate for regularization params
 target_sparsity=0.20    # final target sparsity
@@ -44,7 +44,15 @@ sparsity_warmup=5000    # warmup steps for sparsity; sparsity will linearly incr
 param_reg_type="l2"
 
 # exp directory
-root_dir=exp/wav2vec2-base_${dataset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_distill_weight${distill_weight}_reglr${reg_lr}_${pruning_units}_ctc${ctc_weight}_mask${mask_prob}_chanmask${mask_channel_prob}_preg${param_reg_type}
+# root_dir=exp/wav2vec2-base_${dataset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_distill_weight${distill_weight}_reglr${reg_lr}_${pruning_units}_ctc${ctc_weight}_mask${mask_prob}_chanmask${mask_channel_prob}_preg${param_reg_type}
+root_dir=exp/reg_test
+
+if [ -d "$root_dir" ]; then
+  echo "Directory exists. Deleting $root_dir"
+  rm -rf "$root_dir"
+else
+  echo "$root_dir does not exist."
+fi
 
 # final distill config
 final_lr=0.0001         # learning rate for final distillation (training step 2)
