@@ -851,6 +851,8 @@ def wavlm_model(
     encoder_prune_attention_layer: bool = False,
     encoder_prune_feed_forward_intermediate: bool = False,
     encoder_prune_feed_forward_layer: bool = False,
+    mask_prob: float = 0.75,
+    mask_channel_prob: float = 0.65,
 ) -> Wav2Vec2Model:
     """Builds custom WaveLM model :cite:`chen2022wavlm`. The architecture is compatible
     with Wav2Vec2 model :cite:`baevski2020wav2vec`, and so the output object is
@@ -949,7 +951,15 @@ def wavlm_model(
     aux = None
     if aux_num_out is not None:
         aux = torch.nn.Linear(in_features=encoder_embed_dim, out_features=aux_num_out)
-    return Wav2Vec2Model(normalize_waveform, feature_extractor, encoder, aux)
+
+    return Wav2Vec2Model(
+        normalize_waveform, 
+        feature_extractor, 
+        encoder, 
+        aux, 
+        mask_prob=mask_prob, 
+        mask_channel_prob=mask_channel_prob
+        )
 
 
 def wavlm_base(

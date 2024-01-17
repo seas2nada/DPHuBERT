@@ -1,22 +1,21 @@
 """Convert Hugging Face's WavLM to our format."""
 
 import torch
-from transformers import WavLMModel
+from transformers import WavLMForCTC
 
 from wav2vec2.model import wav2vec2_model
 from wav2vec2.utils.import_huggingface_wavlm import import_huggingface_model
 
 
 if __name__ == "__main__":
-    out_name = "pretrained/wavlm-base-plus.hf.pth"
+    out_name = "pretrained/wavlm-base-libri100.hf.pth"
 
-    original = WavLMModel.from_pretrained("microsoft/wavlm-base-plus")
+    original = WavLMForCTC.from_pretrained("patrickvonplaten/wavlm-libri-clean-100h-base")
     imported = import_huggingface_model(original)
     imported.eval()
-    print(imported)
 
     # default config of wavlm base
-    wavlm_base_plus_config = dict(
+    wavlm_base_config = dict(
         extractor_mode="group_norm",    # wavlm base only uses a group norm at the first conv layer
         extractor_conv_layer_config=[(512, 10, 5)] + [(512, 3, 2)] * 4 + [(512, 2, 2)] * 2,
         extractor_conv_bias=False,
@@ -37,7 +36,7 @@ if __name__ == "__main__":
         encoder_dropout=0.1,
         encoder_layer_norm_first=False,     # wavlm base uses post norm
         encoder_layer_drop=0.05,
-        aux_num_out=32,
+        aux_num_out=31,
         normalize_waveform=False,
         extractor_prune_conv_channels=False,
         encoder_prune_attention_heads=False,
@@ -49,7 +48,7 @@ if __name__ == "__main__":
     torch.save(
         {
             'state_dict': imported.state_dict(),
-            'config': wavlm_base_plus_config,
+            'config': wavlm_base_config,
         }, 
         out_name
     )
@@ -57,4 +56,5 @@ if __name__ == "__main__":
     # verify the saved ckpt
     ckpt = torch.load(out_name, map_location="cpu")
     model = wav2vec2_model(**ckpt['config'])
-    print(model.load_state_dict(ckpt['state_dict'], strict=False))
+    res = model.load_state_dict(ckpt['state_dict'], strict=False)
+    print(f"Missing: {res.missing_keys}\nUnexpected: {res.unexpected_keys}")

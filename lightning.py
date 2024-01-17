@@ -340,32 +340,6 @@ class DistillModule(pl.LightningModule):
         waveforms, lengths, labels = batch
         st_waveforms = waveforms
 
-        ### Gaussian noise distillation ###
-        # mean_waveforms = torch.mean(waveforms)
-        # var_waveforms = torch.var(waveforms)
-        # waveforms = torch.normal(mean=mean_waveforms, std=var_waveforms**0.5, size=waveforms.size(), dtype=waveforms.dtype, device=waveforms.device)
-        # for i, length in enumerate(lengths):
-        #     if length == waveforms.shape[1]:
-        #         continue
-        #     else:
-        #         waveforms[i, length + 1:] = 0.0
-
-        ### Gaussian noise augmentation ###
-        # st_waveforms = waveforms.clone()
-        # noises = torch.normal(mean=0, std=1, size=waveforms.size(), dtype=waveforms.dtype, device=waveforms.device)
-        # for i, length in enumerate(lengths):
-        #     if length == waveforms.shape[1]:
-        #         continue
-        #     else:
-        #         waveforms[i, length + 1:] = 0.0
-        #     # Computing the required SNR
-        #     snr_db = np.random.uniform(5, 15)
-        #     signal_rms = torch.sqrt(torch.mean(st_waveforms[i] ** 2))
-        #     noise_rms = signal_rms / (10 ** (snr_db / 20.0))
-        #     scaled_noise = noises[i] * noise_rms / torch.std(noises[i])
-        #     # Mixing speech with noise
-        #     st_waveforms[i] += scaled_noise
-
         self.teacher_model.eval()
         with torch.no_grad():
             teacher_hiddens, teacher_lengths = self.teacher_model.extract_features(waveforms, lengths, mask=False)
@@ -414,8 +388,8 @@ class DistillModule(pl.LightningModule):
             loss_sup = 0
 
         # Params L2-reg loss
+        l2_reg = 0.0
         if self.param_reg_type == "l2":
-            l2_reg = 0.0
             for n, p in self.student_model.named_parameters():
                 reg_p = self.teacher_state_dict[n].to(p.device)
                 if n in self.M:
@@ -488,20 +462,39 @@ class DistillModule(pl.LightningModule):
     def on_after_backward(self):
         # This hook is called after loss.backward() and before optimizer.step()
         if self.param_reg_type == "l2":
+            all_gradients = []
+
+            # Loop through all the named parameters in the model
             for n, p in self.student_model.named_parameters():
                 if p.requires_grad and p.grad is not None:
                     # Flatten the gradient to work with it as a single vector
                     grad_flat = p.grad.flatten()
-                    
-                    # Determine the threshold for the lowest 20% of gradient elements
-                    threshold = grad_flat.abs().quantile(0.1)
-                    # Create a mask where elements with gradients in the highest 80% are set to 1, others are set to 0
-                    mask = (grad_flat.abs() >= threshold).float().view_as(p)
+                    all_gradients.append(grad_flat)
 
-                    # # Determine the threshold for the lowest 90% of gradient elements
-                    # threshold = grad_flat.abs().quantile(0.9)
-                    # # Create a mask where elements with gradients in the lowest 90% are set to 1, others are set to 0
-                    # mask = (grad_flat.abs() <= threshold).float().view_as(p)
+            # Concatenate all the gradients into a single tensor
+            all_gradients = torch.cat(all_gradients)
+            sorted_gradients = torch.sort(all_gradients.abs())[0]
+
+            # Determine the threshold for the lowest 10% of gradient elements
+            percentile_index = int(0.2 * len(sorted_gradients))
+            threshold = sorted_gradients[percentile_index]
+
+            for n, p in self.student_model.named_parameters():
+                if p.requires_grad and p.grad is not None:
+                    # # Flatten the gradient to work with it as a single vector
+                    # grad_flat = p.grad.flatten()
+                    
+                    # # Determine the threshold for the lowest 20% of gradient elements
+                    # threshold = grad_flat.abs().quantile(0.1)
+                    # # Create a mask where elements with gradients in the highest 80% are set to 1, others are set to 0
+                    # mask = (grad_flat.abs() >= threshold).float().view_as(p)
+                    
+                    # Flatten the gradient to work with it as a single vector
+                    grad_flat = p.grad.flatten()
+
+                    # Create a mask where elements with gradients in the highest 80% are set to 1, others are set to 0
+                    # mask = (grad_flat.abs() >= threshold).float().view_as(p) * 0.998 + 0.001
+                    mask = (grad_flat.abs() >= threshold).float().view_as(p)
 
                     self.M[n] = mask
 
