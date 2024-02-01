@@ -37,7 +37,7 @@ mask_channel_prob=0.2
 # distill config
 lr=0.0002               # learning rate
 warmup=15000            # warmup steps
-max=80000               # max update steps
+max=50000               # max update steps
 pruning_units=conv,head,interm      # conv,head,interm,attlayer,ffnlayer
 reg_lr=0.02             # learning rate for regularization params
 target_sparsity=0.20    # final target sparsity
@@ -65,6 +65,15 @@ final_exp_dir=${root_dir}/lr${final_lr}_up${final_warmup}_max${final_max}
 
 # wandb project
 project_name="dphubert-param-reg"
+
+dict_type="hf"
+
+if [ "$dict_type" == "hf" ]; then
+  # Move the file if dict_type is "hf"
+  cp "data/hf_dict.txt" "$tsv_dir/dict.ltr.txt"
+elif [ "$dict_type" == "fairseq" ]; then
+  cp "data/fairseq_dict.txt" "$tsv_dir/dict.ltr.txt"
+fi
 
 # Training step 1: distill
 mkdir -p ${root_dir}
@@ -110,8 +119,8 @@ python prune.py \
     --distilled_ckpt ${root_dir}/ckpts/*.ckpt \
     --original_ckpt ${student_ckpt} || exit 1;
 
-. ./infer.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
-. ./infer_ted.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+. ./infer.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth --dict_type $dict_type
+. ./infer_ted.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth --dict_type $dict_type
 
 # # Training step 2: final distill
 # pruned_ckpt=${root_dir}/ckpts/pruned_hubert_base.pth

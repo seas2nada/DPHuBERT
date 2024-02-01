@@ -13,6 +13,7 @@ model_name=$PWD/exp/wav2vec2-base_TED100h_sp0.20_spup5000_lr0.0002_up15000_max50
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
         --model_name) model_name="$2"; shift ;;
+        --dict_type) dict_type="$2"; shift ;;
         *) ;;
     esac
     shift
@@ -22,6 +23,13 @@ for subset in "valid"; do
     data_dir=$PWD/data/TED/ted-100h/
     finetuned_model=$PWD/exp/infer_model.pth
     # finetuned_model=$PWD/pretrained/wav2vec2_asr-base-ls960.hf.pth
+
+    if [ "$dict_type" == "hf" ]; then
+        # Move the file if dict_type is "hf"
+        cp "data/hf_dict.txt" "$data_dir/dict.ltr.txt"
+    elif [ "$dict_type" == "fairseq" ]; then
+        cp "data/fairseq_dict.txt" "$data_dir/dict.ltr.txt"
+    fi
 
     # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/ckpts/pruned_hubert_base.pth $finetuned_model
     # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/lr0.0001_up5000_max25000/ckpts/pruned_hubert_base.pth $finetuned_model

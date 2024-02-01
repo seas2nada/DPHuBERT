@@ -35,6 +35,26 @@ class BaseDecoder:
             k: v for k, v in sample["net_input"].items() if k != "prev_output_tokens"
         }
         emissions = self.get_emissions(models, encoder_input)
+        
+        emm = emissions[0].argmax(-1)
+        emm = emm.unique_consecutive()
+        emm = emm[emm != 28]
+        with open('/home/Workspace/DPHuBERT/data/hf_dict.txt', 'r') as f:
+            dicts = f.readlines()
+        # convert_dict = {0 : '<bos>', 1 : '<eos>'}
+        convert_dict = {}
+        for pair in dicts:
+            k, v = pair.strip().split(' ')
+            convert_dict[int(v)] = k
+            # if k != "|":
+            #     convert_dict[int(v) + 1] = k
+            # elif k == "|":
+            #     convert_dict[28] = "|"
+        letters=[]
+        for e in emm:
+            letters.append(convert_dict[int(e)])
+        print("".join(letters))
+        exit()
         return self.decode(emissions)
 
     def get_emissions(
