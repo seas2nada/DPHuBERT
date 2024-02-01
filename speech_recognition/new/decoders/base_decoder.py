@@ -10,17 +10,16 @@ import torch
 from fairseq.data.dictionary import Dictionary
 from fairseq.models.fairseq_model import FairseqModel
 
+# class Mydict:
+#     '/home/Workspace/DPHuBERT/data/hf_dict.txt'
 
 class BaseDecoder:
     def __init__(self, tgt_dict: Dictionary) -> None:
         self.tgt_dict = tgt_dict
+        self.tgt_dict.symbols = self.tgt_dict.symbols[4:]
         self.vocab_size = len(tgt_dict)
 
-        self.blank = (
-            tgt_dict.index("<ctc_blank>")
-            if "<ctc_blank>" in tgt_dict.indices
-            else tgt_dict.bos()
-        )
+        self.blank = 28
         if "<sep>" in tgt_dict.indices:
             self.silence = tgt_dict.index("<sep>")
         elif "|" in tgt_dict.indices:
@@ -35,26 +34,7 @@ class BaseDecoder:
             k: v for k, v in sample["net_input"].items() if k != "prev_output_tokens"
         }
         emissions = self.get_emissions(models, encoder_input)
-        
-        emm = emissions[0].argmax(-1)
-        emm = emm.unique_consecutive()
-        emm = emm[emm != 28]
-        with open('/home/Workspace/DPHuBERT/data/hf_dict.txt', 'r') as f:
-            dicts = f.readlines()
-        # convert_dict = {0 : '<bos>', 1 : '<eos>'}
-        convert_dict = {}
-        for pair in dicts:
-            k, v = pair.strip().split(' ')
-            convert_dict[int(v)] = k
-            # if k != "|":
-            #     convert_dict[int(v) + 1] = k
-            # elif k == "|":
-            #     convert_dict[28] = "|"
-        letters=[]
-        for e in emm:
-            letters.append(convert_dict[int(e)])
-        print("".join(letters))
-        exit()
+
         return self.decode(emissions)
 
     def get_emissions(
