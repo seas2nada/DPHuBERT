@@ -18,9 +18,19 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
+
+for subset in "test_clean" "test_other"; do
     data_dir=$PWD/data/librispeech/$subset/
     finetuned_model=$PWD/exp/infer_model.pth
+
+    dict_type="fairseq"
+
+    if [ "$dict_type" == "hf" ]; then
+        # Move the file if dict_type is "hf"
+        cp "data/hf_dict.txt" "$data_dir/dict.ltr.txt"
+    elif [ "$dict_type" == "fairseq" ]; then
+        cp "data/fairseq_dict.txt" "$data_dir/dict.ltr.txt"
+    fi
     # finetuned_model=$PWD/pretrained/wav2vec2_asr-base-ls960.hf.pth
 
     # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/ckpts/pruned_hubert_base.pth $finetuned_model
@@ -47,5 +57,5 @@ for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
     decoding.wordscore=${wordscore} decoding.silweight=${silscore} \
     decoding.unique_wer_file=True \
     dataset.gen_subset=$subset dataset.max_tokens=2500000 \
-    common_eval.path=$finetuned_model decoding.beam=1500 distributed_training.distributed_world_size=${num_gpus}
+    common_eval.path=$finetuned_model decoding.beam=1500 distributed_training.distributed_world_size=${num_gpus} common_eval.quiet=False
 done

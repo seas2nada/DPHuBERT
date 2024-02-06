@@ -14,8 +14,8 @@
 set -x
 
 # shared config
-tsv_dir=data/librispeech        # data path
-train_subset=train960           # train subset name: train960, train100
+tsv_dir=data/librispeech/train_960        # data path
+train_subset=train           # train subset name: train960, train100
 teacher_ckpt=pretrained/hubert-base-ls960.hf.pth    # checkpoint path
 student_ckpt=${teacher_ckpt}    # student initialization, same as teacher
 distill_layers=0.4,8,12         # use period to separate groups where each group shares the same linear layer: [0], [4, 8, 12]
@@ -31,9 +31,9 @@ warmup=15000            # warmup steps
 max=50000               # max update steps
 pruning_units=conv,head,interm      # conv,head,interm,attlayer,ffnlayer
 reg_lr=0.02             # learning rate for regularization params
-target_sparsity=0.75    # final target sparsity
+target_sparsity=0.2    # final target sparsity
 sparsity_warmup=5000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
-root_dir=exp/hubert-base_${train_subset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_reglr${reg_lr}_${pruning_units}
+root_dir=exp/wav2vec2-large_${train_subset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_reglr${reg_lr}_${pruning_units}
 
 # final distill config
 final_lr=0.0001         # learning rate for final distillation (training step 2)
@@ -41,6 +41,14 @@ final_warmup=5000       # warmup steps
 final_max=25000         # max update steps
 final_exp_dir=${root_dir}/lr${final_lr}_up${final_warmup}_max${final_max}
 
+dict_type="fairseq"
+
+if [ "$dict_type" == "hf" ]; then
+  # Move the file if dict_type is "hf"
+  cp "data/hf_dict.txt" "$tsv_dir/dict.ltr.txt"
+elif [ "$dict_type" == "fairseq" ]; then
+  cp "data/fairseq_dict.txt" "$tsv_dir/dict.ltr.txt"
+fi
 
 # Training step 1: distill
 mkdir -p ${root_dir}
