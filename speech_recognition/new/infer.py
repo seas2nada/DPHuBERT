@@ -110,9 +110,9 @@ class InferenceProcessor:
             for name, p in models.named_parameters():
                 if "dummy_weight" in name:
                     continue
-                if name == "encoder.transformer.pos_conv_embed.conv.weight_g":
+                if name == "encoder.transformer.pos_conv_embed.conv.weight_g" and name not in ckpt['state_dict'].keys():
                     name = "encoder.transformer.pos_conv_embed.conv.parametrizations.weight.original0"
-                if name == "encoder.transformer.pos_conv_embed.conv.weight_v":
+                if name == "encoder.transformer.pos_conv_embed.conv.weight_v" and name not in ckpt['state_dict'].keys():
                     name = "encoder.transformer.pos_conv_embed.conv.parametrizations.weight.original1"
                 p.copy_(ckpt['state_dict'][name])
         

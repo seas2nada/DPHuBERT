@@ -215,6 +215,7 @@ class DistillModule(pl.LightningModule):
         label_dir: Union[str, pathlib.Path] = None,
         spk2info: Union[str, pathlib.Path] = None,
         param_reg_type: str = "ema",
+        threshold: float = 0.2,
     ):
         super().__init__()
 
@@ -276,6 +277,7 @@ class DistillModule(pl.LightningModule):
                     if "log_alpha" in n:
                         self.teacher_state_dict[n] = p.data
             self.M = dict()
+        self.threshold = threshold
 
     def configure_optimizers(self):
         main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
@@ -476,7 +478,7 @@ class DistillModule(pl.LightningModule):
             sorted_gradients = torch.sort(all_gradients.abs())[0]
 
             # Determine the threshold for the lowest 10% of gradient elements
-            percentile_index = int(0.2 * len(sorted_gradients))
+            percentile_index = int(self.threshold * len(sorted_gradients))
             threshold = sorted_gradients[percentile_index]
 
             for n, p in self.student_model.named_parameters():

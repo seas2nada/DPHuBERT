@@ -5,25 +5,31 @@
 
 . tools/activate_python.sh
 
-set -x
+# set -x
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --threshold)
+            threshold="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown parameter: $1"
+            exit 1
+            ;;
+    esac
+done
 
 # shared config
-# dataset=TED100h
-dataset=libri100h
 tsv_dir=data/librispeech/train_clean_100        # data path
-# tsv_dir=data/TED/ted-100h        # data path
-# tsv_dir=data/TED/ted3-total        # data path
 train_subset=train          # train subset name: train960, train100
-# teacher_ckpt=pretrained/wav2vec2_asr-base-ls100.hf.pth    # checkpoint path
-teacher_ckpt=pretrained/wav2vec2_asr-base-ls960.hf.pth    # checkpoint path
-# teacher_ckpt=pretrained/wav2vec2_asr-base-ted100.hf.pth
-# teacher_ckpt=pretrained/wavlm-base-libri100.hf.pth    # checkpoint path
+teacher_ckpt=pretrained/wav2vec2_asr-large-ls960.hf.pth    # checkpoint path
 student_ckpt=${teacher_ckpt}    # student initialization, same as teacher
-distill_layers=0.4,8,12         # use period to separate groups where each group shares the same linear layer: [0], [4, 8, 12]
+distill_layers=0,8,16,24         # use period to separate groups where each group shares the same linear layer: [0], [4, 8, 12]
 distill_mode=layer2layer        # "layer2layer", "predlayer"
-l2_weight=0.0             # weight for L2 loss
-l1_weight=1.0             # weight for L1 loss
-cos_weight=1.0            # weight for cosine similarity
+l2_weight=0             # weight for L2 loss
+l1_weight=1             # weight for L1 loss
+cos_weight=1            # weight for cosine similarity
 cos_type=raw            # "raw", "log_sig"
 
 # loss weight config
@@ -44,11 +50,10 @@ target_sparsity=0.20    # final target sparsity
 sparsity_warmup=5000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
 
 # parameters regularization config
-param_reg_type="none"
+param_reg_type="l2"
 
 # exp directory
-# root_dir=exp/wav2vec2-base_${dataset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_distill_weight${distill_weight}_reglr${reg_lr}_${pruning_units}_ctc${ctc_weight}_mask${mask_prob}_chanmask${mask_channel_prob}_preg${param_reg_type}
-root_dir=exp/w2v2-base-retest
+root_dir=exp/wav2vec2-base_train100_thtest_sp${target_sparsity}_preg${param_reg_type}_thre${threshold}
 
 if [ -d "$root_dir" ]; then
   echo "Directory exists. Deleting $root_dir"
@@ -57,14 +62,17 @@ else
   echo "$root_dir does not exist."
 fi
 
-# final distill config
-final_lr=0.0001         # learning rate for final distillation (training step 2)
-final_warmup=5000       # warmup steps
-final_max=25000         # max update steps
-final_exp_dir=${root_dir}/lr${final_lr}_up${final_warmup}_max${final_max}
-
 # wandb project
 project_name="dphubert-param-reg"
+
+dict_type="fairseq"
+
+if [ "$dict_type" == "hf" ]; then
+  # Move the file if dict_type is "hf"
+  cp "data/hf_dict.txt" "$tsv_dir/dict.ltr.txt"
+elif [ "$dict_type" == "fairseq" ]; then
+  cp "data/fairseq_dict.txt" "$tsv_dir/dict.ltr.txt"
+fi
 
 # Training step 1: distill
 mkdir -p ${root_dir}
@@ -83,7 +91,7 @@ python distill.py \
     --max_updates ${max} \
     --clip_norm 10.0 \
     --num_nodes 1 \
-    --gpus 4 \
+    --gpus 8 \
     --accum_grad 1 \
     --precision 16 \
     --teacher_ckpt ${teacher_ckpt} \
@@ -103,6 +111,7 @@ python distill.py \
     --mask_channel_prob ${mask_channel_prob} \
     --param_reg_type ${param_reg_type} \
     --project_name ${project_name} \
+    --threshold ${threshold} \
     --sparsity_warmup_updates ${sparsity_warmup} 2>&1 | tee ${root_dir}/distill.log || exit 1;
 
 # prune and save model
@@ -111,7 +120,6 @@ python prune.py \
     --original_ckpt ${student_ckpt} || exit 1;
 
 . ./infer.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
-# . ./infer_ted.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
 
 # # Training step 2: final distill
 # pruned_ckpt=${root_dir}/ckpts/pruned_hubert_base.pth

@@ -39,7 +39,7 @@ for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
     rm -rf $finetuned_model; cp -r $model_name $finetuned_model
     # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/lr0.0001_up5000_max25000/ckpts/pruned_hubert_base.pth $finetuned_model
 
-    result_path=$(echo $model_name | sed 's#/ckpts/pruned_hubert_base.pth##g')
+    result_path=pretrained
 
     inference_result=$PWD/inference_result/
     wordscore=-1

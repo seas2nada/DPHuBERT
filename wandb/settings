@@ -1,0 +1,5 @@
+[default]
+entity = hyuniv
+project = dphubert-param-reg
+base_url = https://api.wandb.ai
+

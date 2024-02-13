@@ -37,7 +37,7 @@ def run_train(args):
     model_checkpoint = ModelCheckpoint(dirpath=args.exp_dir / "ckpts", verbose=True)   # only save the latest epoch
     callbacks = [lr_monitor, model_checkpoint]
 
-    wandb_logger = WandbLogger(project=args.project_name, save_dir="logs")
+    wandb_logger = WandbLogger(name=args.exp_dir.name.split('/')[-1], project=args.project_name, save_dir="logs")
 
     trainer = pl.Trainer(
         default_root_dir=args.exp_dir,
@@ -68,6 +68,10 @@ def run_train(args):
         for name, p in teacher_model.named_parameters():
             if "dummy_weight" in name:
                 continue
+            if name == "encoder.transformer.pos_conv_embed.conv.weight_g":
+                name = "encoder.transformer.pos_conv_embed.conv.parametrizations.weight.original0"
+            if name == "encoder.transformer.pos_conv_embed.conv.weight_v":
+                name = "encoder.transformer.pos_conv_embed.conv.parametrizations.weight.original1"
             p.copy_(teacher_ckpt['state_dict'][name])
 
     # Freeze teacher model
@@ -102,6 +106,10 @@ def run_train(args):
         for name, p in student_model.named_parameters():
             if "dummy_weight" in name or "hard_concrete" in name:
                 continue
+            if name == "encoder.transformer.pos_conv_embed.conv.weight_g":
+                name = "encoder.transformer.pos_conv_embed.conv.parametrizations.weight.original0"
+            if name == "encoder.transformer.pos_conv_embed.conv.weight_v":
+                name = "encoder.transformer.pos_conv_embed.conv.parametrizations.weight.original1"
             p.copy_(student_ckpt['state_dict'][name])
 
     # Create linear layers which transform student hiddens to teacher hiddens
@@ -170,6 +178,7 @@ def run_train(args):
         seconds_per_batch=args.seconds_per_batch,
         num_workers=args.num_workers,
         param_reg_type=args.param_reg_type,
+        threshold=args.threshold,
     )
 
     trainer.fit(
@@ -406,6 +415,12 @@ def _parse_args():
         type=str,
         help="project name"
     )
+    parser.add_argument(
+        "--threshold",
+        default="0.2",
+        type=float,
+    )
+
     
     return parser.parse_args()
 
