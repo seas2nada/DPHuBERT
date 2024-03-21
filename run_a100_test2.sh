@@ -47,13 +47,13 @@ max=50000               # max update steps
 pruning_units=conv,head,interm      # conv,head,interm,attlayer,ffnlayer
 reg_lr=0.02             # learning rate for regularization params
 sparsity_warmup=5000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
-threshold=0.2
+threshold=0.5
 
 # parameters regularization config
-param_reg_type="none"
+param_reg_type="l2"
 
 # exp directory
-root_dir=exp/wav2vec2-base_train100_sp${target_sparsity}_preg${param_reg_type}_thre${threshold}
+root_dir=exp/wav2vec2-large_train100_sp${target_sparsity}_preg${param_reg_type}_thre${threshold}
 
 if [ -d "$root_dir" ]; then
   echo "Directory exists. Deleting $root_dir"

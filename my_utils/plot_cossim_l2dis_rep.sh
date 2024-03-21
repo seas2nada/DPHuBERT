@@ -5,23 +5,8 @@
 
 . tools/activate_python.sh
 
-# set -x
-
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --param_reg_type)
-            param_reg_type="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown parameter: $1"
-            exit 1
-            ;;
-    esac
-done
-
 # shared config
-tsv_dir=data/librispeech/train_10h        # data path
+tsv_dir=data/librispeech/train_960        # data path
 train_subset=train          # train subset name: train960, train100
 teacher_ckpt=pretrained/wav2vec2_asr-large-ls960.hf.pth    # checkpoint path
 student_ckpt=${teacher_ckpt}    # student initialization, same as teacher
@@ -42,27 +27,18 @@ mask_channel_prob=0.2
 
 # distill config
 lr=0.0002               # learning rate
-warmup=5000            # warmup steps
-max=20000               # max update steps
+warmup=15000            # warmup steps
+max=50000               # max update steps
 pruning_units=conv,head,interm      # conv,head,interm,attlayer,ffnlayer
 reg_lr=0.02             # learning rate for regularization params
-target_sparsity=0.20    # final target sparsity
-sparsity_warmup=2000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
-threshold=0.2
+target_sparsity=0.70    # final target sparsity
+sparsity_warmup=5000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
 
 # parameters regularization config
-# param_reg_type="l2"
+param_reg_type="none"
 
 # exp directory
-data_dir_name=$(echo $tsv_dir | sed 's#data/librispeech/##g')
-root_dir=exp/wav2vec2-large_${data_dir_name}_sp${target_sparsity}_preg${param_reg_type}_thre${threshold}
-
-if [ -d "$root_dir" ]; then
-  echo "Directory exists. Deleting $root_dir"
-  rm -rf "$root_dir"
-else
-  echo "$root_dir does not exist."
-fi
+root_dir=exp/plot_pngs
 
 # wandb project
 project_name="dphubert-param-reg"
@@ -79,7 +55,7 @@ fi
 # Training step 1: distill
 mkdir -p ${root_dir}
 
-python distill.py \
+python my_utils/plot_cossim_l2dis_rep.py \
     --tsv_dir ${tsv_dir} \
     --label_dir ${tsv_dir} \
     --train_subset ${train_subset} \
@@ -93,7 +69,7 @@ python distill.py \
     --max_updates ${max} \
     --clip_norm 10.0 \
     --num_nodes 1 \
-    --gpus 2 \
+    --gpus 4 \
     --accum_grad 2 \
     --precision 16 \
     --teacher_ckpt ${teacher_ckpt} \
@@ -113,12 +89,4 @@ python distill.py \
     --mask_channel_prob ${mask_channel_prob} \
     --param_reg_type ${param_reg_type} \
     --project_name ${project_name} \
-    --threshold ${threshold} \
     --sparsity_warmup_updates ${sparsity_warmup} 2>&1 | tee ${root_dir}/distill.log || exit 1;
-
-# prune and save model
-python prune.py \
-    --distilled_ckpt ${root_dir}/ckpts/*.ckpt \
-    --original_ckpt ${student_ckpt} || exit 1;
-
-. ./infer.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth

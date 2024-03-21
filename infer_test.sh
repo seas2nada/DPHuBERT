@@ -1,63 +1,59 @@
-#!/bin/bash
-# Set bash to 'debug' mode, it will exit on :
-# -e 'error', -u 'undefined variable', -o ... 'error in pipeline', -x 'print commands',
+# for root_dir in "exp/w2v2large_960toTED_dp_l2preg" "exp/w2v2large_960toTED_dp_nopreg" "exp/w2v2large_pretrained";
+#     do . ./infer_chime.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+# done
 
-. tools/activate_python.sh
+# for root_dir in "exp/OMP/wav2vec2_asr-large-ls960-OMP-sp0.2"; do
+#     . ./infer_ted.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+#     . ./infer_l2arc.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+#     . ./infer_cv.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+#     . ./infer_chime.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+# done
 
-set -e
-set -u
-set -o pipefail
+# for root_dir in "exp/w2v2large_960tol2arc_dp_l2preg_max5000_sp0.20_th0.4"; do
+#     . ./infer_chime.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+# done
 
-model_name=$PWD/exp/wav2vec2-base_train960_sp0.20_spup15000_lr0.0002_up30000_max150000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0005_mask0.2_chanmask0.2/ckpts/pruned_hubert_base.pth
+for exp_dir in "exp/whisper_medium_es+fr+pt+de_regnone_4gpu_max20000_sp0.20"; do
+    model_name=${exp_dir}/ckpts/pruned_hubert_base.pth
 
-while [[ "$#" -gt 0 ]]; do
-    case "$1" in
-        --model_name) model_name="$2"; shift ;;
-        *) ;;
-    esac
-    shift
+    # for language in "ru" "it"; do 
+    # bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "wer" --dataset "mozilla-foundation/common_voice_16_1"; done
+
+    for language in "ko_kr" "ja_jp" "cmn_hans_cn"; do
+    bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "cer" --dataset "google/fleurs"; done
+
+    # for language in "ru_ru" "it_it"; do 
+    # bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "wer" --dataset "google/fleurs"; done
 done
 
-
-for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
-    data_dir=$PWD/data/librispeech/$subset/
-    finetuned_model=$PWD/exp/infer_model.pth
-
-    dict_type="fairseq"
-
-    if [ "$dict_type" == "hf" ]; then
-        # Move the file if dict_type is "hf"
-        cp "data/hf_dict.txt" "$data_dir/dict.ltr.txt"
-    elif [ "$dict_type" == "fairseq" ]; then
-        cp "data/fairseq_dict.txt" "$data_dir/dict.ltr.txt"
-    fi
-    # finetuned_model=$PWD/pretrained/wav2vec2_asr-base-ls960.hf.pth
-
-    # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/ckpts/pruned_hubert_base.pth $finetuned_model
-    # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/lr0.0001_up5000_max25000/ckpts/pruned_hubert_base.pth $finetuned_model
+# for exp_dir in "exp/whisper_medium"; do
+#     # model_name=${exp_dir}/ckpts/pruned_hubert_base.pth
+#     model_name=pretrained/whisper-medium.hf.pth
     
-    rm -rf $finetuned_model; cp -r $model_name $finetuned_model
-    # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/lr0.0001_up5000_max25000/ckpts/pruned_hubert_base.pth $finetuned_model
+#     for language in "ru"; do 
+#     bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "wer" --dataset "mozilla-foundation/common_voice_16_1"; done
 
-    result_path=pretrained
+#     # for language in "ru_ru"; do 
+#     # bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "wer" --dataset "google/fleurs"; done
+    
+#     # for language in "ko_kr"; do 
+#     # bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "cer" --dataset "google/fleurs"; done
+# done
 
-    inference_result=$PWD/inference_result/
-    wordscore=-1
-    lmweight=2
-    silscore=0
-    num_gpus=1
+# exp_dir=exp/whisper_medium_es+fr+pt+de+tr+ko_regl2_8gpu_max30000_sp0.20_thre0.5
+# model_name=${exp_dir}/ckpts/pruned_hubert_base.pth
 
-    . ./tools/activate_python.sh
+# exp_dir=exp/whisper_medium
+# model_name=pretrained/whisper-medium.hf.pth
 
-    export PYTHONPATH=$PWD
-    FAIRDIR=$PWD/tools/fairseq
-    export PYTHONPATH=$PYTHONPATH:$FAIRDIR
+# for language in "es" "fr" "pt" "de" "tr" "ko" "en" "it"; do 
+# bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "wer" --dataset "mozilla-foundation/common_voice_16_1"; done
 
-    python speech_recognition/new/infer.py --config-dir speech_recognition/new/conf \
-    --config-name infer task=audio_finetuning task.data=$data_dir common.user_dir=$FAIRDIR/examples/wav2vec \
-    task.labels=ltr decoding.type=viterbi \
-    decoding.wordscore=${wordscore} decoding.silweight=${silscore} \
-    decoding.unique_wer_file=True \
-    dataset.gen_subset=$subset dataset.max_tokens=2500000 \
-    common_eval.path=$finetuned_model common_eval.results_path=$result_path decoding.beam=1500 distributed_training.distributed_world_size=${num_gpus}
-done
+# for language in "ja" "zh-CN"; do 
+# bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "cer" --dataset "mozilla-foundation/common_voice_16_1"; done
+
+# for language in "it_it"; do 
+# bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "wer" --dataset "google/fleurs"; done
+
+# for language in "ja_jp" "cmn_hans_cn"; do 
+# bash infer_whisper.sh --exp_dir ${exp_dir} --model_name ${model_name} --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "cer" --dataset "google/fleurs"; done

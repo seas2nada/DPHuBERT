@@ -50,8 +50,8 @@ class Wav2Vec2Model(Module):
         feature_extractor: Module,
         encoder: Module,
         aux: Optional[Module] = None,
-        mask_prob: float = 0.65,
-        mask_channel_prob: float = 0.75,
+        mask_prob: float = 0.0,
+        mask_channel_prob: float = 0.0,
     ):
         super().__init__()
         self.normalize_waveform = normalize_waveform
@@ -292,8 +292,8 @@ def wav2vec2_model_original(
     encoder_prune_attention_layer: bool = False,
     encoder_prune_feed_forward_intermediate: bool = False,
     encoder_prune_feed_forward_layer: bool = False,
-    mask_prob: float = 0.75,
-    mask_channel_prob: float = 0.65,
+    mask_prob: float = 0.0,
+    mask_channel_prob: float = 0.0,
 ) -> Wav2Vec2Model:
     """Builds custom :class:`~torchaudio.models.Wav2Vec2Model`.
 
@@ -851,8 +851,8 @@ def wavlm_model(
     encoder_prune_attention_layer: bool = False,
     encoder_prune_feed_forward_intermediate: bool = False,
     encoder_prune_feed_forward_layer: bool = False,
-    mask_prob: float = 0.75,
-    mask_channel_prob: float = 0.65,
+    mask_prob: float = 0.0,
+    mask_channel_prob: float = 0.0,
 ) -> Wav2Vec2Model:
     """Builds custom WaveLM model :cite:`chen2022wavlm`. The architecture is compatible
     with Wav2Vec2 model :cite:`baevski2020wav2vec`, and so the output object is

@@ -17,11 +17,10 @@ while [[ "$#" -gt 0 ]]; do
     esac
     shift
 done
-
+result_path=$(echo $model_name | sed 's#/ckpts/pruned_hubert_base.pth##g')
 
 for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
     data_dir=$PWD/data/librispeech/$subset/
-    finetuned_model=$PWD/exp/infer_model.pth
 
     dict_type="fairseq"
 
@@ -31,15 +30,6 @@ for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
     elif [ "$dict_type" == "fairseq" ]; then
         cp "data/fairseq_dict.txt" "$data_dir/dict.ltr.txt"
     fi
-    # finetuned_model=$PWD/pretrained/wav2vec2_asr-base-ls960.hf.pth
-
-    # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/ckpts/pruned_hubert_base.pth $finetuned_model
-    # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/lr0.0001_up5000_max25000/ckpts/pruned_hubert_base.pth $finetuned_model
-    
-    rm -rf $finetuned_model; cp -r $model_name $finetuned_model
-    # rm -rf $finetuned_model; cp -r $PWD/exp/hubert-base_train_sp0.20_spup5000_lr0.0002_up15000_max50000_layer2layer0.4,8,12_reglr0.02_conv,head,interm_ctc0.0001/lr0.0001_up5000_max25000/ckpts/pruned_hubert_base.pth $finetuned_model
-
-    result_path=$(echo $model_name | sed 's#/ckpts/pruned_hubert_base.pth##g')
 
     inference_result=$PWD/inference_result/
     wordscore=-1
@@ -59,5 +49,5 @@ for subset in "dev_clean" "dev_other" "test_clean" "test_other"; do
     decoding.wordscore=${wordscore} decoding.silweight=${silscore} \
     decoding.unique_wer_file=True \
     dataset.gen_subset=$subset dataset.max_tokens=2500000 \
-    common_eval.path=$finetuned_model common_eval.results_path=$result_path decoding.beam=1500 distributed_training.distributed_world_size=${num_gpus}
+    common_eval.path=$PWD/$model_name common_eval.results_path=$result_path decoding.beam=1500 distributed_training.distributed_world_size=${num_gpus}
 done

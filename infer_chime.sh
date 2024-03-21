@@ -18,8 +18,8 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
-for subset in "ted-valid" "ted-test"; do
-    data_dir=$PWD/data/TED/$subset/
+for subset in "dt05" "et05"; do
+    data_dir=$PWD/data/chime3/$subset/
 
     inference_result=$PWD/inference_result/
     wordscore=-1

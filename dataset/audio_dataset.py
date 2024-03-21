@@ -6,7 +6,7 @@ https://github.com/pytorch/audio/blob/main/examples/hubert/dataset/hubert_datase
 """
 
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple, Union
+from typing import Dict, Iterator, List, Optional, Tuple, Union, Any
 
 import numpy as np
 import torch
@@ -15,6 +15,9 @@ import torchaudio
 from torch import Tensor
 from torch.utils.data import BatchSampler, Dataset, DistributedSampler
 
+from transformers import AutoFeatureExtractor, AutoTokenizer
+
+lang_to_id = {"en": 0, "es": 1, "fr": 2, "pt": 3, "de": 4, "tr": 5, "ko": 6, "it": 7, "ro": 8, "ja": 9, "zh": 10, "ru": 11, "english": 0, "spanish": 1, "french": 2, "portuguese": 3, "german": 4, "turkish": 5, "korean": 6, "italian": 7, "romanian": 8, "japanese": 9, "chinese": 10, "russian": 11}
 
 class BucketizeBatchSampler(BatchSampler):
     """Buketized BatchSampler for sequential data with different lengths to reduce number of paddings.
@@ -303,6 +306,96 @@ class AudioDataset(Dataset):
             label = None
         return waveform, length, label
 
+class WhisperDataset(Dataset):
+    """Create a Dataset for HuBERT model training and fine-tuning.
+
+    Args:
+        tsv_dir (str or Path): The root directory of the ``.tsv`` file list.
+        subset (str): The subset of the dataset. Options: [``train100``, ``train960``, ``valid``].
+    """
+
+    def __init__(
+        self,
+        tsv_dir: Union[str, Path],
+        subset: str,
+        label_dir: Optional[str] = None,
+        dictionary = None,
+        language: Optional[str] = "en",
+    ) -> None:
+        self.f_list, self.ind_list, self.len_list = self._get_lists(Path(tsv_dir), subset)
+        self.labels = None
+        if label_dir is not None:
+            self.labels = self._load_labels(label_dir, subset)
+        
+        self.tokenizer = AutoTokenizer.from_pretrained("openai/whisper-large-v3")
+        self.tokenizer.set_prefix_tokens(language=language, task="transcribe")
+
+    def __len__(self):
+        return len(self.f_list)
+
+    def _get_lists(
+        self,
+        tsv_dir: Path,
+        subset: str,
+    ) -> Tuple[List[Path], List[int], List[int]]:
+        """Get the list of paths for iteration.
+        Args:
+            tsv_dir (Path): The root directory of the ``.tsv`` file list.
+            subset (str): The subset of the dataset. Options: [``train100``, ``train960``, ``valid``].
+
+        Returns:
+            (numpy.array) List of file paths.
+            (numpy.array) List of indices.
+            (numpy.array) List of waveform lengths.
+        """
+        f_ind_len_list = []
+        with open(tsv_dir / f"{subset}.tsv") as f:
+            root = f.readline().rstrip()
+            for index, line in enumerate(f):
+                path, nsample = line.split("\t")
+                path = f"{root}/{path}"
+                nsample = int(nsample)
+                f_ind_len_list.append((path, index, nsample))
+        f_list, ind_list, len_list = zip(*f_ind_len_list)
+        return np.asarray(f_list), np.asarray(ind_list), np.asarray(len_list)
+
+    def _load_audio(self, index: int) -> Tensor:
+        """Load waveform given the sample index of the dataset.
+        Args:
+            index (int): The sample index.
+
+        Returns:
+            (Tensor): The corresponding waveform Tensor. shape: (channel, time)
+        """
+        wav_path = self.f_list[index]
+        waveform, sample_rate = torchaudio.load(wav_path)
+        assert waveform.shape[1] == self.len_list[index]
+        return waveform
+
+    def _load_labels(self, label_dir: Path, subset: str) -> np.array:
+        """Load all labels to memory into a numpy array.
+        Args:
+            label_dir (Path): The directory that contains the label file.
+            subset (str): The subset of the dataset. Options: [``train``, ``valid``].
+
+        Returns:
+            (np.array): The numpy arrary that contains the labels for each audio file.
+        """
+        with open(label_dir / f"{subset}.wrd") as f:
+            labels = [line.rstrip() for line in f]
+        return np.asarray(labels, dtype=np.string_)
+
+    def __getitem__(self, index):
+        waveform = self._load_audio(index)  # (channel, time)
+        length = waveform.shape[1]
+        if self.labels is not None:
+            input_str = self.labels[index].decode('utf-8')
+            input_str = input_str.lower()
+            label = self.tokenizer(input_str).input_ids
+            label = torch.tensor(label)
+        else:
+            label = None
+        return waveform, length, label
 
 def _crop_audio(
     waveform: Tensor,
@@ -406,3 +499,113 @@ class CollateFnAudio:
             labels = None
             
         return waveforms, lengths, labels
+
+class CollateFnWhisper:
+
+    def __init__(
+        self,
+        pad: bool = False,
+        rand_crop: bool = True,
+    ) -> None:
+        self.pad = pad
+        self.rand_crop = rand_crop
+
+        self.feature_extractor = AutoFeatureExtractor.from_pretrained("openai/whisper-large-v3")
+
+    def __call__(self, batch: List[Tuple[Tensor, int]]) -> Tuple[Tensor, Tensor]:
+        """
+        Args:
+            batch (List[Tuple(Tensor, int)]):
+                The list of tuples that contains the waveforms and audio lengths.
+
+        Returns:
+            (Tuple(Tensor, Tensor)):
+                The Tensor of waveforms with dimensions `(batch, time)`.
+                The Tensor of audio lengths with dimension `(batch,)`.
+        """
+        if self.pad:
+            num_frames = max([sample[0].shape[1] for sample in batch])
+        else:
+            num_frames = min([sample[0].shape[1] for sample in batch])
+        waveforms, lengths, labels = [], [], []
+        for sample in batch:
+            waveform, length, label = sample   # waveform has shape (channel, time)
+            waveform, length = _crop_audio(waveform, length, num_frames, self.rand_crop)    # waveform has shape (time,)
+            waveforms.append(waveform.numpy())
+            lengths.append(length)
+            labels.append(label)
+
+        features = self.feature_extractor(waveforms, sampling_rate=16000, return_tensors='pt')
+
+        lengths = torch.tensor(lengths)
+
+        if labels[0] is not None:
+            num_batch = len(labels)
+            target_lengths = torch.zeros(num_batch).to(torch.int)
+            max_len = 0
+
+            for batch_idx, label in enumerate(labels):
+                target_lengths[batch_idx] += len(label)
+                if len(label) > max_len:
+                    max_len = len(label)
+            
+            # pad_idx = tokenizer.pad_token_id
+            labels_ = torch.ones(num_batch, max_len).to(torch.int).to(features.device)
+            labels_ *= tokenizer.pad_token_id
+            for batch_idx, label in enumerate(labels):
+                labels_[batch_idx, :len(label)] = label.clone().detach().to(labels_.device)
+            labels = (labels_, target_lengths)
+        else:
+            labels = None
+            
+        return features, lengths, labels
+
+class DataCollatorSpeechSeq2SeqWithPadding:
+    """
+    Data collator that will dynamically pad the inputs received.
+    Args:
+        processor ([`WhisperProcessor`])
+            The processor used for processing the data.
+        decoder_start_token_id (`int`)
+            The begin-of-sentence of the decoder.
+        forward_attention_mask (`bool`)
+            Whether to return attention_mask.
+    """
+
+    def __init__(self, processor, decoder_start_token_id, forward_attention_mask):
+        self.processor = processor
+        self.decoder_start_token_id = decoder_start_token_id
+        self.forward_attention_mask = forward_attention_mask
+
+    def __call__(self, features: List[Dict[str, Union[List[int], torch.Tensor]]]) -> Dict[str, torch.Tensor]:
+        # split inputs and labels since they have to be of different lengths and need
+        # different padding methods
+        model_input_name = self.processor.model_input_names[0]
+        input_features = [{model_input_name: feature[model_input_name]} for feature in features]
+        label_features = [{"input_ids": feature["labels"]} for feature in features]
+
+        batch = self.processor.feature_extractor.pad(input_features, return_tensors="pt")
+
+        if self.forward_attention_mask:
+            batch["attention_mask"] = torch.LongTensor([feature["attention_mask"] for feature in features])
+
+        labels_batch = self.processor.tokenizer.pad(label_features, return_tensors="pt")
+
+        # replace padding with -100 to ignore loss correctly
+        eos_token = 50257
+        labels = labels_batch["input_ids"].masked_fill(labels_batch.attention_mask.ne(1), -100)
+        a, b = torch.where(labels == eos_token)
+        unique_indices = torch.unique(a)
+        eos_indices = torch.stack([unique_indices, b[unique_indices]], dim=1)
+        for index in eos_indices:
+            labels[index[0], index[1] + 1:] = -100
+
+        # if bos token is appended in previous tokenization step,
+        # cut bos token here as it's append later anyways
+        if (labels[:, 0] == self.decoder_start_token_id).all().cpu().item():
+            labels = labels[:, 1:]
+
+        batch["labels"] = labels
+        batch["language"] = torch.tensor([lang_to_id[feature["language"]] for feature in features])
+
+        return batch

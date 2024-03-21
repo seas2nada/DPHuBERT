@@ -175,3 +175,5 @@ None
 inference_results
 trained_models
 logs
+
+whisper_test*/

@@ -5,25 +5,10 @@
 
 . tools/activate_python.sh
 
-# set -x
-
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --param_reg_type)
-            param_reg_type="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown parameter: $1"
-            exit 1
-            ;;
-    esac
-done
-
 # shared config
-tsv_dir=data/librispeech/train_1h        # data path
+tsv_dir=data/librispeech/train_clean_100        # data path
 train_subset=train          # train subset name: train960, train100
-teacher_ckpt=pretrained/wav2vec2_asr-large-ls960.hf.pth    # checkpoint path
+teacher_ckpt=pretrained/whisper-medium.hf.pth    # checkpoint path
 student_ckpt=${teacher_ckpt}    # student initialization, same as teacher
 distill_layers=0,8,16,24         # use period to separate groups where each group shares the same linear layer: [0], [4, 8, 12]
 distill_mode=layer2layer        # "layer2layer", "predlayer"
@@ -33,7 +18,7 @@ cos_weight=1            # weight for cosine similarity
 cos_type=raw            # "raw", "log_sig"
 
 # loss weight config
-ctc_weight=0.0005
+ce_weight=0.5
 distill_weight=1.0      # distill loss weight
 
 # masking config
@@ -41,21 +26,23 @@ mask_prob=0.2
 mask_channel_prob=0.2
 
 # distill config
-lr=0.0002               # learning rate
-warmup=2500            # warmup steps
-max=10000               # max update steps
+lr=0.0002              # learning rate
+warmup=10000            # warmup steps
+max=30000               # max update steps
 pruning_units=conv,head,interm      # conv,head,interm,attlayer,ffnlayer
 reg_lr=0.02             # learning rate for regularization params
 target_sparsity=0.20    # final target sparsity
-sparsity_warmup=1000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
-threshold=0.2
+sparsity_warmup=3000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
+threshold=0.0          # threshold for pruning
 
-# parameters regularization config
-# param_reg_type="l2"
+# # parameters regularization config
+param_reg_type="none"
+
+language="es+fr+pt+de"
 
 # exp directory
-data_dir_name=$(echo $tsv_dir | sed 's#data/librispeech/##g')
-root_dir=exp/wav2vec2-large_${data_dir_name}_sp${target_sparsity}_preg${param_reg_type}_thre${threshold}
+root_dir=exp/whisper_medium_${language}_reg${param_reg_type}_8gpu_max${max}_sp${target_sparsity}
+# root_dir=exp/whisper_test
 
 if [ -d "$root_dir" ]; then
   echo "Directory exists. Deleting $root_dir"
@@ -67,19 +54,11 @@ fi
 # wandb project
 project_name="dphubert-param-reg"
 
-dict_type="fairseq"
-
-if [ "$dict_type" == "hf" ]; then
-  # Move the file if dict_type is "hf"
-  cp "data/hf_dict.txt" "$tsv_dir/dict.ltr.txt"
-elif [ "$dict_type" == "fairseq" ]; then
-  cp "data/fairseq_dict.txt" "$tsv_dir/dict.ltr.txt"
-fi
-
 # Training step 1: distill
 mkdir -p ${root_dir}
 
-python distill.py \
+export TOKENIZERS_PARALLELISM=false
+python whisper_distill.py \
     --tsv_dir ${tsv_dir} \
     --label_dir ${tsv_dir} \
     --train_subset ${train_subset} \
@@ -93,9 +72,8 @@ python distill.py \
     --max_updates ${max} \
     --clip_norm 10.0 \
     --num_nodes 1 \
-    --gpus 2 \
-    --accum_grad 2 \
-    --precision 16 \
+    --gpus 8 \
+    --accum_grad 1 \
     --teacher_ckpt ${teacher_ckpt} \
     --student_ckpt ${student_ckpt} \
     --distill_layers ${distill_layers} \
@@ -107,18 +85,32 @@ python distill.py \
     --pruning_units ${pruning_units} \
     --reg_learning_rate ${reg_lr} \
     --target_sparsity ${target_sparsity} \
-    --ctc_weight ${ctc_weight} \
+    --ce_weight ${ce_weight} \
     --distill_weight ${distill_weight} \
     --mask_prob ${mask_prob} \
     --mask_channel_prob ${mask_channel_prob} \
     --param_reg_type ${param_reg_type} \
     --project_name ${project_name} \
+    --language $language \
+    --whisper_model_name "openai/whisper-medium" \
+    --batch_size 32 \
     --threshold ${threshold} \
     --sparsity_warmup_updates ${sparsity_warmup} 2>&1 | tee ${root_dir}/distill.log || exit 1;
 
 # prune and save model
-python prune.py \
+python prune_whisper.py \
     --distilled_ckpt ${root_dir}/ckpts/*.ckpt \
     --original_ckpt ${student_ckpt} || exit 1;
 
-. ./infer.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+for language in "en_us" "es_419" "fr_fr" "pt_br" "de_de" "ko_kr" "it_it"; do
+  . ./infer_whisper_pruned.sh --exp_dir ${root_dir} --model_name ${root_dir}/ckpts/pruned_hubert_base.pth --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "wer"
+done
+for language in "ja_jp" "cmn_hans_cn"; do
+  . ./infer_whisper_pruned.sh --exp_dir ${root_dir} --model_name ${root_dir}/ckpts/pruned_hubert_base.pth --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "cer"
+done
+
+for language in "es" "fr" "pt" "de" "ko" "en" "it"; do 
+bash infer_whisper.sh --exp_dir ${root_dir} --model_name ${root_dir}/ckpts/pruned_hubert_base.pth --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "wer" --dataset "mozilla-foundation/common_voice_16_1"; done
+
+for language in "ja" "zh-CN"; do 
+bash infer_whisper.sh --exp_dir ${root_dir} --model_name ${root_dir}/ckpts/pruned_hubert_base.pth --language $language --whisper_model_name "openai/whisper-medium" --eval_metric "cer" --dataset "mozilla-foundation/common_voice_16_1"; done

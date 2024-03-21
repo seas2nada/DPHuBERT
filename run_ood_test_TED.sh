@@ -5,23 +5,11 @@
 
 . tools/activate_python.sh
 
-# set -x
-
-while [[ "$#" -gt 0 ]]; do
-    case $1 in
-        --threshold)
-            threshold="$2"
-            shift 2
-            ;;
-        *)
-            echo "Unknown parameter: $1"
-            exit 1
-            ;;
-    esac
-done
+set -x
 
 # shared config
-tsv_dir=data/librispeech/train_clean_100        # data path
+# tsv_dir=data/librispeech/train_clean_100        # data path
+tsv_dir=data/TED/ted3-total        # data path
 train_subset=train          # train subset name: train960, train100
 teacher_ckpt=pretrained/wav2vec2_asr-large-ls960.hf.pth    # checkpoint path
 student_ckpt=${teacher_ckpt}    # student initialization, same as teacher
@@ -50,10 +38,11 @@ target_sparsity=0.20    # final target sparsity
 sparsity_warmup=5000    # warmup steps for sparsity; sparsity will linearly increase from 0 to target
 
 # parameters regularization config
-param_reg_type="l2"
+param_reg_type="none"
 
 # exp directory
-root_dir=exp/wav2vec2-base_train100_thtest_sp${target_sparsity}_preg${param_reg_type}_thre${threshold}
+# root_dir=exp/wav2vec2-base_${dataset}_sp${target_sparsity}_spup${sparsity_warmup}_lr${lr}_up${warmup}_max${max}_${distill_mode}${distill_layers}_distill_weight${distill_weight}_reglr${reg_lr}_${pruning_units}_ctc${ctc_weight}_mask${mask_prob}_chanmask${mask_channel_prob}_preg${param_reg_type}
+root_dir=exp/w2v2large_960toTED_dp_nopreg
 
 if [ -d "$root_dir" ]; then
   echo "Directory exists. Deleting $root_dir"
@@ -91,8 +80,8 @@ python distill.py \
     --max_updates ${max} \
     --clip_norm 10.0 \
     --num_nodes 1 \
-    --gpus 8 \
-    --accum_grad 1 \
+    --gpus 4 \
+    --accum_grad 2 \
     --precision 16 \
     --teacher_ckpt ${teacher_ckpt} \
     --student_ckpt ${student_ckpt} \
@@ -111,7 +100,6 @@ python distill.py \
     --mask_channel_prob ${mask_channel_prob} \
     --param_reg_type ${param_reg_type} \
     --project_name ${project_name} \
-    --threshold ${threshold} \
     --sparsity_warmup_updates ${sparsity_warmup} 2>&1 | tee ${root_dir}/distill.log || exit 1;
 
 # prune and save model
@@ -120,42 +108,7 @@ python prune.py \
     --original_ckpt ${student_ckpt} || exit 1;
 
 . ./infer.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
-
-# # Training step 2: final distill
-# pruned_ckpt=${root_dir}/ckpts/pruned_hubert_base.pth
-# mkdir -p ${final_exp_dir}
-
-# python final_distill.py \
-#     --tsv_dir ${tsv_dir} \
-#     --label_dir ${tsv_dir} \
-#     --train_subset ${train_subset} \
-#     --seconds_per_batch 160 \
-#     --num_workers 12 \
-#     --exp_dir ${final_exp_dir} \
-#     --log_interval 50 \
-#     --learning_rate ${final_lr} \
-#     --weight_decay 0.0 \
-#     --warmup_updates ${final_warmup} \
-#     --max_updates ${final_max} \
-#     --clip_norm 10.0 \
-#     --num_nodes 1 \
-#     --gpus 4 \
-#     --accum_grad 1 \
-#     --precision 16 \
-#     --teacher_ckpt ${teacher_ckpt} \
-#     --student_ckpt ${pruned_ckpt} \
-#     --distill_layers ${distill_layers} \
-#     --distill_mode ${distill_mode} \
-#     --l2_weight ${l2_weight} \
-#     --l1_weight ${l1_weight} \
-#     --cos_weight ${cos_weight} \
-#     --ctc_weight ${ctc_weight} \
-#     --distill_weight ${distill_weight} \
-#     --mask_prob ${mask_prob} \
-#     --mask_channel_prob ${mask_channel_prob} \
-#     --cos_type ${cos_type} 2>&1 | tee ${final_exp_dir}/final_distill.log || exit 1;
-
-# # save final model and config
-# python save_final_ckpt.py \
-#     --config_path ${pruned_ckpt} \
-#     --ckpt_after_final_distill ${final_exp_dir}/ckpts/*.ckpt || exit 1;
+. ./infer_ted.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+. ./infer_l2arc.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+. ./infer_cv.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
+. ./infer_chime.sh --model_name $root_dir/ckpts/pruned_hubert_base.pth
