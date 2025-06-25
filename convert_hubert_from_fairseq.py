@@ -6,7 +6,6 @@ from torchaudio.models.wav2vec2.utils import import_fairseq_model
 
 from wav2vec2.model import wav2vec2_model
 
-
 if __name__ == "__main__":
     out_name = "pretrained/hubert-base-ls960.fairseq.pth"
 
@@ -45,9 +44,14 @@ if __name__ == "__main__":
         encoder_prune_feed_forward_layer=False,
     )
 
+    state_dict = imported.state_dict()
+    if 'encoder.transformer.pos_conv_embed.conv.parametrizations.weight.original0' in state_dict.keys():
+        state_dict['encoder.transformer.pos_conv_embed.conv.weight_g'] = state_dict.pop('encoder.transformer.pos_conv_embed.conv.parametrizations.weight.original0')
+        state_dict['encoder.transformer.pos_conv_embed.conv.weight_v'] = state_dict.pop('encoder.transformer.pos_conv_embed.conv.parametrizations.weight.original1')
+
     torch.save(
         {
-            'state_dict': imported.state_dict(),
+            'state_dict': state_dict,
             'config': hubert_base_config,
         }, 
         out_name
