@@ -305,14 +305,24 @@ class DistillModule(pl.LightningModule):
 
         device = next(model.parameters()).device
         expected_zeros = torch.tensor(0.0, device=device)
-
+        
+        total_params_ = 0
         for m in model.modules():
             if hasattr(m, "count_expected_flops_and_l0"):
-                _, exp_l0 = m.count_expected_flops_and_l0()
-                expected_zeros += torch.as_tensor(exp_l0, device=device)
+                _, exp_nonzero = m.count_expected_flops_and_l0()
+                exp_nonzero = torch.as_tensor(exp_nonzero, device=device)
 
+                # compute total parameters governed by this gate
+                total_gated = m.weights.numel()
+                if getattr(m, "use_bias", False):
+                    total_gated += m.bias.numel()
+
+                expected_zeros += total_gated - exp_nonzero
+                total_params_ += total_gated
+
+        # Clamp for numerical safety
+        expected_zeros = torch.clamp(expected_zeros, 0.0, float(total_params))
         return expected_zeros / total_params
-
 
     def _step(self, batch, batch_idx, mode):
         waveforms, lengths = batch
