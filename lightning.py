@@ -357,8 +357,6 @@ class DistillModule(pl.LightningModule):
         loss_l0 = sum([m.regularization() for m in self.l0_modules])
 
         exp_sparsity = self._expected_sparsity()          # ȃs
-        print(exp_sparsity)
-        exit()
         tgt_sparsity = self._get_target_sparsity()        # s*
         loss_reg = self.lambda1 * (tgt_sparsity - exp_sparsity) \
                 + self.lambda2 * (tgt_sparsity - exp_sparsity).pow(2)
