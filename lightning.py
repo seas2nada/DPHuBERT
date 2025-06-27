@@ -236,7 +236,7 @@ class DistillModule(pl.LightningModule):
         self.num_workers = num_workers
 
     def configure_optimizers(self):
-        main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
+        main_params = [p for n, p in self.student_model.named_parameters() if "loga" not in n]
         # main_params.extend(list(self.distill_linear_projs.parameters()))
         pgs = [
             {
@@ -250,10 +250,10 @@ class DistillModule(pl.LightningModule):
             pgs.extend(
                 [
                     {
-                        'params': [p for n, p in self.student_model.named_parameters() if "log_alpha" in n],
+                        'params': [p for n, p in self.student_model.named_parameters() if "loga" in n],
                         'lr': self.reg_learning_rate,
                         'weight_decay': 0.0,
-                        'name': 'log_alpha',
+                        'name': 'loga',
                     },
                     {
                         'params': [self.lambda1, self.lambda2],
