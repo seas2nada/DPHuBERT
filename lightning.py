@@ -308,9 +308,8 @@ class DistillModule(pl.LightningModule):
         
         total_params_ = 0
         for m in model.modules():
-            if hasattr(m, "count_expected_flops_and_l0"):
-                _, exp_nonzero = m.count_expected_flops_and_l0()
-                exp_nonzero = torch.as_tensor(exp_nonzero, device=device)
+            if hasattr(m, "l0_norm"):
+                exp_nonzero = m.l0_norm()
 
                 # compute total parameters governed by this gate
                 total_gated = m.weights.numel()
@@ -358,9 +357,11 @@ class DistillModule(pl.LightningModule):
         loss_l0 = sum([m.regularization() for m in self.l0_modules])
 
         exp_sparsity = self._expected_sparsity()          # ȃs
+        print(exp_sparsity)
+        exit()
         tgt_sparsity = self._get_target_sparsity()        # s*
-        loss_reg = self.lambda1 * (exp_sparsity - tgt_sparsity) \
-                + self.lambda2 * (exp_sparsity - tgt_sparsity).pow(2)
+        loss_reg = self.lambda1 * (tgt_sparsity - exp_sparsity) \
+                + self.lambda2 * (tgt_sparsity - exp_sparsity).pow(2)
 
         total_loss = (
             loss_distill

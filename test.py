@@ -14,8 +14,8 @@ What it reports
 4. global sparsity over the whole network
 
 python test.py \
-    --pruned_ckpt     /home/asml02/Workspace/DPHuBERT/exps/train100_exp/ckpts/last.ckpt \
-    --pretrained_ckpt /home/asml02/Workspace/DPHuBERT/hubert_base.pt \
+    --pruned_ckpt     $PWD/exps/train100_exp/ckpts/last.ckpt \
+    --pretrained_ckpt $PWD/pretrained/hubert-base-ls960.fairseq.pth \
     --device cuda
 """
 from __future__ import annotations

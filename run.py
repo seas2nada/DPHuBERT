@@ -254,7 +254,7 @@ def run_train(args: argparse.Namespace) -> None:  # noqa: C901 – top-level sc
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser("HuBERT distillation with L₀ unstructured pruning")
     # paths ---------------------------------------------------------------
-    p.add_argument("--exp-dir", type=pathlib.Path, default="exps/train100_exp")
+    p.add_argument("--exp-dir", type=pathlib.Path, default="exps/train960_exp")
     p.add_argument("--teacher-ckpt", type=pathlib.Path, default="pretrained/hubert-base-ls960.fairseq.pth")
     p.add_argument("--student-ckpt", type=pathlib.Path, default="pretrained/hubert-base-ls960.fairseq.pth")
     p.add_argument("--resume-checkpoint", type=pathlib.Path, default=None)
@@ -265,8 +265,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gpus", type=int, default=1)
     p.add_argument("--num-nodes", type=int, default=1)
     p.add_argument("--accum-grad", type=int, default=1)
-    p.add_argument("--max-updates", type=int, default=100000)
-    p.add_argument("--warmup-updates", type=int, default=3000)
+    p.add_argument("--max-updates", type=int, default=400000)
+    p.add_argument("--warmup-updates", type=int, default=15000)
     p.add_argument("--learning-rate", type=float, default=2e-4)
     p.add_argument("--weight-decay", type=float, default=2e-2)
     p.add_argument("--clip-norm", type=float, default=1.0)
@@ -275,7 +275,7 @@ def parse_args() -> argparse.Namespace:
 
     # dataset -------------------------------------------------------------
     p.add_argument("--tsv-dir", type=pathlib.Path, default="data/librispeech")
-    p.add_argument("--train-subset", type=str, default="train100")
+    p.add_argument("--train-subset", type=str, default="train960")
     p.add_argument("--seconds-per-batch", type=float, default=160.0)
     p.add_argument("--num-workers", type=int, default=8)
 
