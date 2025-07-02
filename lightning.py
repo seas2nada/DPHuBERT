@@ -371,10 +371,11 @@ class DistillModule(pl.LightningModule):
             {
                 f"{mode}_loss": total_loss,   # total loss
                 f"{mode}_loss_distill": loss_distill,   # distill total loss
+                f"{mode}_loss_ac": self.hparams.ac_weight * loss_ac,
                 f"{mode}_loss_mse": loss_mse,
                 f"{mode}_loss_l1": loss_l1,
                 f"{mode}_loss_cos": loss_cos,
-                f"{mode}_loss_reg": loss_reg,   # sparsity loss
+                f"{mode}_loss_reg": self.hparams.l0_lambda * loss_reg,   # sparsity loss
             }
         )
         if mode == "train" and self.use_reg:

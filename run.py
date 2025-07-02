@@ -14,11 +14,12 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning_lite.utilities.rank_zero import _get_rank
 
 # third-party L₀ layers --------------------------------------------------
-from L0_regularization.l0_layers import L0Conv1d, L0Dense
+from acphubert.module.l0_layers import L0Conv1d, L0Dense
+from acphubert.model import _wrap_with_l0
 
 # local project imports --------------------------------------------------
 from lightning import DistillLoss, DistillModule
-from wav2vec2.model import wav2vec2_model
+from acphubert.wav2vec2.model import wav2vec2_model
 
 _LG = logging.getLogger(f"{__name__}:{_get_rank()}")
 
@@ -30,64 +31,6 @@ def _init_layer_transform(module: nn.Linear):
     """Initialises a linear mapping as near-identity (student→teacher)."""
     module.weight.data.copy_(torch.eye(len(module.weight)))  # type: ignore[arg-type]
     module.bias.data.zero_()
-
-def _wrap_with_l0(
-    module: nn.Module,
-    droprate_init: float,
-    l0_temperature: float,
-    l0_weight_decay: float,
-    collected: list[L0Dense | L0Conv1d] | None = None,
-) -> None:
-    """Replace ``nn.Linear`` / ``nn.Conv1d`` with L₀‑regularised variants."""
-
-    if collected is None:
-        collected = []
-
-    for name, child in list(module.named_children()):
-        # ── Fully‑connected ────────────────────────────────────────────────
-        if isinstance(child, nn.Linear):
-            wrapped = L0Dense(
-                in_features=child.in_features,
-                out_features=child.out_features,
-                bias=child.bias is not None,
-                droprate_init=droprate_init,
-                weight_decay=l0_weight_decay,
-                temperature=l0_temperature,
-            )
-            with torch.no_grad():
-                wrapped.weights.copy_(child.weight.data.t())  # (out,in) → (in,out)
-                if child.bias is not None:
-                    wrapped.bias.copy_(child.bias.data)
-            setattr(module, name, wrapped)
-            collected.append(wrapped)
-
-        # ── 1‑D convolution (feature extractor) ────────────────────────────
-        elif isinstance(child, nn.Conv1d):
-            wrapped = L0Conv1d(
-                in_channels=child.in_channels,
-                out_channels=child.out_channels,
-                kernel_size=child.kernel_size[0],
-                stride=child.stride[0],
-                padding=child.padding[0],
-                dilation=child.dilation[0],
-                groups=child.groups,
-                bias=child.bias is not None,
-                droprate_init=droprate_init,
-                weight_decay=l0_weight_decay,
-                temperature=l0_temperature,
-            )
-            with torch.no_grad():
-                wrapped.weights.copy_(child.weight.data)
-                if child.bias is not None:
-                    wrapped.bias.copy_(child.bias.data)
-            setattr(module, name, wrapped)
-            collected.append(wrapped)
-
-        # ── Recurse ────────────────────────────────────────────────────────
-        else:
-            _wrap_with_l0(child, droprate_init, l0_temperature, l0_weight_decay, collected)
-
-    module.__dict__.setdefault("_l0_modules", collected)
 
 def _collect_l0_modules(module: nn.Module) -> list[L0Dense | L0Conv1d]:
     """Return a flat ``list`` of *all* ``L0Dense`` / ``L0Conv1d`` instances
@@ -173,12 +116,6 @@ def run_train(args: argparse.Namespace) -> None:  # noqa: C901 – top-level sc
     _LG.info("Wrapped student with L₀ gates; total prunable modules: %d",
              len(_collect_l0_modules(student_model)))
 
-    # distillation layer mapping ------------------------------------------
-    distill_layer_groups = [
-        [int(l) for l in g.split(",")] for g in args.distill_layers.split(".")
-    ]
-    distill_layers: List[int] = [l for group in distill_layer_groups for l in group]
-
     s_dim = student_model.encoder.feature_projection.projection.out_features
     t_dim = teacher_model.encoder.feature_projection.projection.out_features
 
@@ -196,9 +133,9 @@ def run_train(args: argparse.Namespace) -> None:  # noqa: C901 – top-level sc
     #     raise ValueError(f"Invalid distill_mode: {args.distill_mode}")
 
     # criterion ------------------------------------------------------------
-    l2_weight=0             # weight for L2 loss
+    l2_weight=1             # weight for L2 loss
     l1_weight=1             # weight for L1 loss
-    cos_weight=1            # weight for cosine similarity
+    cos_weight=0            # weight for cosine similarity
     cos_type="raw"            # "raw", "log_sig"
     distill_criterion = DistillLoss(
         l2_weight=l2_weight,
@@ -225,7 +162,7 @@ def run_train(args: argparse.Namespace) -> None:  # noqa: C901 – top-level sc
         num_workers=args.num_workers,
         reg_learning_rate=0.02,
         target_sparsity=0.75,
-        sparsity_warmup_updates=5000,
+        sparsity_warmup_updates=30000,
         l0_lambda=args.l0_lambda,
     )
 
@@ -254,7 +191,7 @@ def run_train(args: argparse.Namespace) -> None:  # noqa: C901 – top-level sc
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser("HuBERT distillation with L₀ unstructured pruning")
     # paths ---------------------------------------------------------------
-    p.add_argument("--exp-dir", type=pathlib.Path, default="exps/train960_exp")
+    p.add_argument("--exp-dir", type=pathlib.Path, default="exps/train100_exp")
     p.add_argument("--teacher-ckpt", type=pathlib.Path, default="pretrained/hubert-base-ls960.fairseq.pth")
     p.add_argument("--student-ckpt", type=pathlib.Path, default="pretrained/hubert-base-ls960.fairseq.pth")
     p.add_argument("--resume-checkpoint", type=pathlib.Path, default=None)
@@ -265,8 +202,8 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--gpus", type=int, default=1)
     p.add_argument("--num-nodes", type=int, default=1)
     p.add_argument("--accum-grad", type=int, default=1)
-    p.add_argument("--max-updates", type=int, default=400000)
-    p.add_argument("--warmup-updates", type=int, default=15000)
+    p.add_argument("--max-updates", type=int, default=100000)
+    p.add_argument("--warmup-updates", type=int, default=30000)
     p.add_argument("--learning-rate", type=float, default=2e-4)
     p.add_argument("--weight-decay", type=float, default=2e-2)
     p.add_argument("--clip-norm", type=float, default=1.0)
@@ -275,7 +212,7 @@ def parse_args() -> argparse.Namespace:
 
     # dataset -------------------------------------------------------------
     p.add_argument("--tsv-dir", type=pathlib.Path, default="data/librispeech")
-    p.add_argument("--train-subset", type=str, default="train960")
+    p.add_argument("--train-subset", type=str, default="train100")
     p.add_argument("--seconds-per-batch", type=float, default=160.0)
     p.add_argument("--num-workers", type=int, default=8)
 
@@ -293,7 +230,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--cos-type", choices=["sample", "mean"], default="sample")
 
     # L₀ regularisation ---------------------------------------------------
-    p.add_argument("--l0-lambda", type=float, default=1e-4,
+    p.add_argument("--l0-lambda", type=float, default=0.1,
                    help="Strength of the L₀ penalty (λ in the paper).")
     p.add_argument("--droprate-init", type=float, default=0.2,
                    help="Initial drop probability (π₀).")
