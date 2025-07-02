@@ -9,7 +9,7 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 
-from wav2vec2.model import (
+from acphubert.wav2vec2.model import (
     Wav2Vec2Model,
 )
 from dataset.audio_dataset import (
@@ -20,7 +20,7 @@ from dataset.audio_dataset import (
 )
 
 # third-party L₀ layers --------------------------------------------------
-from L0_regularization.l0_layers import L0Conv1d, L0Dense
+from acphubert.module import L0Conv1d, L0Dense
 
 def _collect_l0_modules(model: nn.Module) -> List[nn.Module]:
     """Return all sub-modules that expose a ``regularization()`` method."""

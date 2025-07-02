@@ -14,7 +14,7 @@ from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning_lite.utilities.rank_zero import _get_rank
 
 # third-party L₀ layers --------------------------------------------------
-from acphubert.module.l0_layers import L0Conv1d, L0Dense
+from acphubert.module import L0Conv1d, L0Dense
 from acphubert.model import _wrap_with_l0
 
 # local project imports --------------------------------------------------
