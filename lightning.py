@@ -4,12 +4,11 @@ from typing import Optional, List, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 
-from acphubert.wav2vec2.model import (
+from wav2vec2.model import (
     Wav2Vec2Model,
 )
 from dataset.audio_dataset import (
@@ -19,43 +18,6 @@ from dataset.audio_dataset import (
     AudioDataset,
 )
 
-# third-party L₀ layers --------------------------------------------------
-from acphubert.module import L0Conv1d, L0Dense
-
-def _collect_l0_modules(model: nn.Module) -> List[nn.Module]:
-    """Return all sub-modules that expose a ``regularization()`` method."""
-    return [m for m in model.modules() if hasattr(m, "regularization")]
-
-def _acf_statsmodels(feats: torch.Tensor, max_tau: int) -> torch.Tensor:
-    """Compute ACF up to *max_tau* for batched, feature‑averaged series.
-
-    Parameters
-    ----------
-    feats: (B, T, D) float tensor – hidden states
-    max_tau: int – highest lag (inclusive)
-
-    Returns
-    -------
-    acf: (B, max_tau) – correlation coefficients for lags 1…max_tau
-    """
-    B, T, D = feats.shape
-    device, dtype = feats.device, feats.dtype
-    if T < 2:
-        return torch.zeros(B, max_tau, device=device, dtype=dtype)
-
-    # Average over feature dim → (B, T)
-    series = feats.mean(dim=2)
-    series = series - series.mean(dim=1, keepdim=True)  # centre
-    var = (series.square().mean(dim=1, keepdim=True)).clamp_min_(1e-12)  # (B,1)
-
-    acf_vals = []
-    for tau in range(1, max_tau + 1):
-        if T <= tau:
-            acf_vals.append(torch.zeros(B, device=device, dtype=dtype))
-            continue
-        cov = (series[:, tau:] * series[:, :-tau]).mean(dim=1)  # (B)
-        acf_vals.append(cov / var.squeeze(1))
-    return torch.stack(acf_vals, dim=1)  # (B, max_tau)
 
 class LinearDecayLRScheduler(torch.optim.lr_scheduler._LRScheduler):
     """Linear learning rate scheduler with warm up."""
@@ -207,11 +169,11 @@ class DistillModule(pl.LightningModule):
 
         self.original_num_params = sum(p.numel() for p in teacher_model.parameters())
 
-        # assert distill_mode in ["layer2layer", "predlayer"], distill_mode
-        # assert len(distill_layers) == len(distill_linear_projs)
-        # self.distill_mode = distill_mode
-        # self.distill_layers = distill_layers
-        # self.distill_linear_projs = distill_linear_projs
+        assert distill_mode in ["layer2layer", "predlayer"], distill_mode
+        assert len(distill_layers) == len(distill_linear_projs)
+        self.distill_mode = distill_mode
+        self.distill_layers = distill_layers
+        self.distill_linear_projs = distill_linear_projs
         self.distill_loss = distill_loss
 
         self.learning_rate = learning_rate
@@ -236,8 +198,8 @@ class DistillModule(pl.LightningModule):
         self.num_workers = num_workers
 
     def configure_optimizers(self):
-        main_params = [p for n, p in self.student_model.named_parameters() if "loga" not in n]
-        # main_params.extend(list(self.distill_linear_projs.parameters()))
+        main_params = [p for n, p in self.student_model.named_parameters() if "log_alpha" not in n]
+        main_params.extend(list(self.distill_linear_projs.parameters()))
         pgs = [
             {
                 'params': main_params,
@@ -250,10 +212,10 @@ class DistillModule(pl.LightningModule):
             pgs.extend(
                 [
                     {
-                        'params': [p for n, p in self.student_model.named_parameters() if "loga" in n],
+                        'params': [p for n, p in self.student_model.named_parameters() if "log_alpha" in n],
                         'lr': self.reg_learning_rate,
                         'weight_decay': 0.0,
-                        'name': 'loga',
+                        'name': 'log_alpha',
                     },
                     {
                         'params': [self.lambda1, self.lambda2],
@@ -280,114 +242,58 @@ class DistillModule(pl.LightningModule):
             return self.target_sparsity
         return self.target_sparsity * (self.global_step / self.sparsity_warmup_updates)
 
-    def _expected_sparsity(self):
-        """Return E[#zeros] / |θ| as a *scalar tensor* on the model's device.
-
-        Parameters
-        ----------
-        model : nn.Module
-            Network containing any mix of L₀‑regularised layers (or none).
-
-        Notes
-        -----
-        *E[#zeros]* is obtained by summing the *expected* L₀ counts that each
-        gated layer reports via ``count_expected_flops_and_l0``.  The denominator
-        is the *total* parameter count of the model – gated or not – so the result
-        is directly comparable to the user‑specified target sparsity in your
-        Lagrange penalty.
-        """
-
-        model = self.student_model
-
-        total_params = sum(p.numel() for p in model.parameters())
-        if total_params == 0:
-            raise ValueError("Model contains no parameters")
-
-        device = next(model.parameters()).device
-        expected_zeros = torch.tensor(0.0, device=device)
-        
-        total_params_ = 0
-        for m in model.modules():
-            if hasattr(m, "l0_norm"):
-                exp_nonzero = m.l0_norm()
-
-                # compute total parameters governed by this gate
-                total_gated = m.weights.numel()
-                if getattr(m, "use_bias", False):
-                    total_gated += m.bias.numel()
-
-                expected_zeros += total_gated - exp_nonzero
-                total_params_ += total_gated
-
-        # Clamp for numerical safety
-        expected_zeros = torch.clamp(expected_zeros, 0.0, float(total_params))
-        return expected_zeros / total_params
-
     def _step(self, batch, batch_idx, mode):
         waveforms, lengths = batch
         self.teacher_model.eval()
         with torch.no_grad():
             teacher_hiddens, teacher_lengths = self.teacher_model.extract_features(waveforms, lengths)
-            # teacher_hiddens = torch.stack(
-            #     [teacher_hiddens[idx] for idx in self.distill_layers], dim=1
-            # )   # (batch, layer, time, T_feature)
             teacher_hiddens = torch.stack(
-                [teacher_hiddens[idx] for idx in range(len(teacher_hiddens))], dim=1
-            )   # (batch, layer, time, T_feature)
+                [teacher_hiddens[idx] for idx in self.distill_layers], dim=1
+            )   # (batch, layer, time, feature)
         
         student_hiddens, student_lengths = self.student_model.extract_features(waveforms, lengths)
         new_student_hiddens = []
-        for idx in range(len(student_hiddens)):
-            new_student_hiddens.append(student_hiddens[idx])
-        student_hiddens = torch.stack(new_student_hiddens, dim=1)   # (batch, layer, time, S_feature)
+        for idx, proj in zip(self.distill_layers, self.distill_linear_projs):
+            if self.distill_mode == "layer2layer":
+                new_student_hiddens.append(proj(student_hiddens[idx]))
+            elif self.distill_mode == "predlayer":
+                new_student_hiddens.append(proj(student_hiddens[-1]))
+            else:
+                raise ValueError(f"Invalid distill mode: {self.distill_mode}")
+        student_hiddens = torch.stack(new_student_hiddens, dim=1)   # (batch, layer, time, feature)
 
-        # 1) feature mapping distillation
-        loss_distill, (loss_mse, loss_l1, loss_cos) = self.distill_loss(
-            student_hiddens, teacher_hiddens
-        )
+        loss_distill, (loss_mse, loss_l1, loss_cos) = self.distill_loss(student_hiddens, teacher_hiddens)
 
-        # 2) statsmodels‑style ACF loss
-        stu_feat = student_hiddens.mean(dim=1)  # (B,T,F)
-        tea_feat = teacher_hiddens.mean(dim=1)
-        ac_student = _acf_statsmodels(stu_feat, self.hparams.ac_max_tau)
-        ac_teacher = _acf_statsmodels(tea_feat, self.hparams.ac_max_tau)
-        loss_ac = F.mse_loss(ac_student, ac_teacher)
+        if self.use_reg:
+            cur_target_sparsity = self._get_target_sparsity()
+            cur_expected_sparsity = 1. - self.student_model.get_num_params() / self.original_num_params
+            loss_reg = self.lambda1 * (cur_expected_sparsity - cur_target_sparsity) \
+                + self.lambda2 * (cur_expected_sparsity - cur_target_sparsity)**2
+        else:
+            loss_reg = 0
 
-        # 3) L₀ regularisation
-        loss_l0 = sum([m.regularization() for m in self.l0_modules])
-
-        exp_sparsity = self._expected_sparsity()          # ȃs
-        tgt_sparsity = self._get_target_sparsity()        # s*
-        loss_reg = self.lambda1 * (tgt_sparsity - exp_sparsity) \
-                + self.lambda2 * (tgt_sparsity - exp_sparsity).pow(2)
-
-        total_loss = (
-            loss_distill
-            + self.hparams.ac_weight * loss_ac
-            + self.hparams.l0_lambda * loss_reg
-        )
+        loss = loss_distill + loss_reg
 
         self.log_dict(
             {
-                f"{mode}_loss": total_loss,   # total loss
+                f"{mode}_loss": loss,   # total loss
                 f"{mode}_loss_distill": loss_distill,   # distill total loss
-                f"{mode}_loss_ac": self.hparams.ac_weight * loss_ac,
                 f"{mode}_loss_mse": loss_mse,
                 f"{mode}_loss_l1": loss_l1,
                 f"{mode}_loss_cos": loss_cos,
-                f"{mode}_loss_reg": self.hparams.l0_lambda * loss_reg,   # sparsity loss
+                f"{mode}_loss_reg": loss_reg,   # sparsity loss
             }
         )
         if mode == "train" and self.use_reg:
             self.log_dict(
                 {
-                    'sparsity_expected': exp_sparsity,
-                    'sparsity_target': tgt_sparsity,
+                    'sparsity_expected': cur_expected_sparsity,
+                    'sparsity_target': cur_target_sparsity,
                     'lambda1': self.lambda1,
                     'lambda2': self.lambda2,
                 },
             )
-        return total_loss
+        return loss
 
     def training_step(self, batch, batch_idx):
         loss = self._step(batch, batch_idx, mode="train")

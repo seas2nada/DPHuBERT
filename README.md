@@ -1,8 +1,11 @@
 # DPHuBERT
 
+![GitHub Repo stars](https://img.shields.io/github/stars/pyf98/DPHuBERT)
+
 This repo contains the code and models for our paper: 
 
-Yifan Peng, Yui Sudo, Shakeel Muhammad, and Shinji Watanabe, “[DPHuBERT: Joint Distillation and Pruning of Self-Supervised Speech Models](https://arxiv.org/abs/2305.17651),” in Proc. INTERSPEECH, 2023. (to appear)
+Yifan Peng, Yui Sudo, Shakeel Muhammad, and Shinji Watanabe, “DPHuBERT: Joint Distillation and Pruning of Self-Supervised Speech Models,” in Proc. INTERSPEECH, 2023.
+[[arXiv](https://arxiv.org/abs/2305.17651)] [[paper](https://www.isca-speech.org/archive/interspeech_2023/peng23c_interspeech.html)]
 
 
 ## Overview
@@ -31,7 +34,7 @@ Our models are also shown in the [SUPERB leaderboard](https://superbbenchmark.or
 
 ## Requirements
 
-Our code is based on PyTorch, TorchAudio, and PyTorch Lightning. Please install these required packages from their official sources. The latest versions should work. We include our versions below for reference.
+Our code is based on PyTorch, TorchAudio, and PyTorch Lightning. Please install these required packages from their official sources. We include our versions below for reference, but other versions might also work.
 
 ```
 # Main packages for training
@@ -115,17 +118,25 @@ We also provide some pre-trained models.
 
 ## Citation
 
-Please cite our paper if you use DPHuBERT.
+Please cite related papers if you use DPHuBERT.
 
 ```
-@inproceedings{dphubert,
-    title={{DPHuBERT: Joint Distillation and Pruning of Self-Supervised Speech Models}},
-    author={Yifan Peng and Yui Sudo and Shakeel Muhammad and Shinji Watanabe},
-    booktitle={Proceedings of the 24th Annual Conference of the International Speech Communication Association (INTERSPEECH)},
-    year={2023},
+@inproceedings{peng23c_interspeech,
+  author={Yifan Peng and Yui Sudo and Shakeel Muhammad and Shinji Watanabe},
+  title={{DPHuBERT: Joint Distillation and Pruning of Self-Supervised Speech Models}},
+  year=2023,
+  booktitle={Proc. INTERSPEECH 2023},
+  pages={62--66},
+  doi={10.21437/Interspeech.2023-1213}
 }
+@INPROCEEDINGS{10095780,
+  author={Peng, Yifan and Kim, Kwangyoun and Wu, Felix and Sridhar, Prashant and Watanabe, Shinji},
+  booktitle={ICASSP 2023 - 2023 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)}, 
+  title={Structured Pruning of Self-Supervised Pre-Trained Models for Speech Recognition and Understanding}, 
+  year={2023},
+  pages={1-5},
+  doi={10.1109/ICASSP49357.2023.10095780}}
 ```
-
 
 ## Acknowledgments
 
